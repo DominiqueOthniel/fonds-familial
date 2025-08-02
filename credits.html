@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Gestion des crédits</title>
+<style>
+    body {
+  font-family: sans-serif;
+  margin: 20px;
+  background: #f4f4f4;
+}
+
+h1, h2 {
+  text-align: center;
+}
+
+.tabs {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 15px;
+}
+
+.tabs button {
+  padding: 10px 20px;
+  margin: 0 5px;
+  cursor: pointer;
+  border: none;
+  background-color: #007bff;
+  color: white;
+  border-radius: 4px;
+}
+
+.tab-content {
+  background: white;
+  padding: 20px;
+  border-radius: 5px;
+}
+
+form {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+  justify-content: center;
+}
+
+form input, form select {
+  padding: 5px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+th, td {
+  border: 1px solid #ccc;
+  padding: 8px;
+  text-align: center;
+}
+
+</style>
+</head>
+<body>
+  <h1>Écran Crédit</h1>
+
+  <div class="tabs">
+    <button onclick="switchTab('credits')">📋 Crédits</button>
+    <button onclick="switchTab('remboursements')">💸 Remboursements</button>
+  </div>
+
+  <!-- Onglet Crédits -->
+  <div id="montant" class="tab-content">
+    <h2>Liste des Crédits</h2>
+    <form id="formCredit">
+      <select id="selectMembre" required>
+         <option value="">-- Sélectionner un membre --</option>
+      </select>
+      <input type="number" id="montantCredit" placeholder="Montant demandé" required>
+    <label for="dateExpiration">Date d'expiration :</label>
+<input type="date" id="dateExpiration" required />
+
+      <button type="submit">Accorder le Crédit</button>
+    </form>
+    <table>
+      <thead>
+        <tr>
+          <th>Membre</th>
+          <th>Montant initial</th>
+          <th>Montant à rembourser</th>
+          <th>Restant</th>
+          <th>État</th>
+          <th>Expiration</th>
+        </tr>
+      </thead>
+      <tbody id="listeCredits"></tbody>
+    </table>
+  </div>
+
+  <!-- Onglet Remboursements -->
+  <div id="remboursements" class="tab-content" style="display:none;">
+    <h2>Remboursements</h2>
+    <form id="formRemboursement">
+      <select id="remboursementCredit" required></select>
+      <input type="number" id="montantRemboursement" placeholder="Montant à rembourser" required>
+      <button type="submit">Enregistrer</button>
+    </form>
+    <table>
+      <thead>
+        <tr>
+          <th>Membre</th>
+          <th>Montant</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody id="listeRemboursements"></tbody>
+    </table>
+  </div>
+
+  <script src="credit.js"></script>
+</body>
+</html>

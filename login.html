@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Connexion - Tontine</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      height: 100vh;
+      font-family: 'Roboto', sans-serif;
+      background: linear-gradient(135deg, #a1c4fd, #c2e9fb);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      color: #333;
+      overflow: hidden;
+    }
+
+    .login-container {
+      background: #ffffffdd;
+      padding: 40px 30px;
+      border-radius: 20px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+      width: 100%;
+      max-width: 380px;
+      backdrop-filter: blur(10px);
+      animation: fadeInScale 0.6s ease forwards;
+    }
+
+    h2 {
+      text-align: center;
+      margin-bottom: 30px;
+      font-weight: 700;
+      font-size: 2rem;
+      color: #3a4750;
+    }
+
+    input[type="email"],
+    input[type="password"] {
+      width: 100%;
+      padding: 15px 18px;
+      margin: 12px 0 20px 0;
+      border-radius: 12px;
+      border: 1.5px solid #a1c4fd;
+      font-size: 16px;
+      transition: border-color 0.3s ease;
+      outline: none;
+      font-weight: 400;
+    }
+
+    input[type="email"]:focus,
+    input[type="password"]:focus {
+      border-color: #4a90e2;
+      box-shadow: 0 0 8px #4a90e2aa;
+    }
+
+    button {
+      width: 100%;
+      padding: 15px 0;
+      background: #4a90e2;
+      border: none;
+      border-radius: 14px;
+      color: white;
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 6px 15px #4a90e280;
+      transition: background 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    button:hover {
+      background: #3a78c2;
+      box-shadow: 0 8px 20px #3a78c280;
+    }
+
+    #message {
+      margin-top: 10px;
+      text-align: center;
+      font-weight: 600;
+      color: #e74c3c;
+      display: none;
+      user-select: none;
+    }
+
+    @keyframes fadeInScale {
+      0% {
+        opacity: 0;
+        transform: scale(0.9);
+      }
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    @media (max-width: 400px) {
+      .login-container {
+        padding: 30px 20px;
+        border-radius: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="login-container">
+    <h2>Connexion</h2>
+    <form id="login-form">
+      <input type="email" id="email" placeholder="Email" required />
+      <input type="password" id="password" placeholder="Mot de passe" required />
+      <button type="submit">Se connecter</button>
+      <div id="message"></div>
+    </form>
+  </div>
+
+  <script src="login.js"></script>
+</body>
+</html>
