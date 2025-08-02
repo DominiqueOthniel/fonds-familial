@@ -4,6 +4,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "postinstall": "echo Skipping electron download",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
