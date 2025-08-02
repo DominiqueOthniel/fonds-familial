@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 const bcrypt = require("bcryptjs");
 const Database = require("better-sqlite3");
-const dbManager = require('./db-Manager');
+const dbManager = require("./db-manager");
 
 const db = new Database(path.join(__dirname, "tontine.db"));
 
@@ -37,12 +37,16 @@ db.exec(`
 `);
 
 // Initialisation des utilisateurs si pas encore dans la table
-const countUsers = db.prepare("SELECT COUNT(*) as count FROM users").get().count;
+const countUsers = db
+  .prepare("SELECT COUNT(*) as count FROM users")
+  .get().count;
 if (countUsers === 0) {
   const hashAdmin = bcrypt.hashSync("admin1234", 10);
   const hashAdjoint = bcrypt.hashSync("adjoint1234", 10);
 
-  const insertUser = db.prepare("INSERT INTO users (email, password, role) VALUES (?, ?, ?)");
+  const insertUser = db.prepare(
+    "INSERT INTO users (email, password, role) VALUES (?, ?, ?)"
+  );
   insertUser.run("admin@tontine.com", hashAdmin, "admin");
   insertUser.run("adjoint@tontine.com", hashAdjoint, "adjoint");
   console.log("Utilisateurs admin et adjoint créés");
@@ -99,19 +103,26 @@ ipcMain.handle("login", async (_event, { email, password }) => {
 
 ipcMain.handle("ajouter-membre", (_event, membre) => {
   try {
-    const { nom, telephone, profession, ville, dateNaissance, caution } = membre;
+    const { nom, telephone, profession, ville, dateNaissance, caution } =
+      membre;
     const stmt = db.prepare(`
       INSERT INTO membres (nom, telephone, profession, ville, dateNaissance, caution)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
-    const info = stmt.run(nom, telephone, profession, ville, dateNaissance, caution);
+    const info = stmt.run(
+      nom,
+      telephone,
+      profession,
+      ville,
+      dateNaissance,
+      caution
+    );
     return { success: true, id: info.lastInsertRowid };
   } catch (err) {
     console.error("Erreur ajouter-membre:", err);
     throw err;
   }
 });
-
 
 ipcMain.handle("get-membres", () => {
   try {
@@ -123,9 +134,20 @@ ipcMain.handle("get-membres", () => {
   }
 });
 
-ipcMain.handle("modifier-membre", (_, id,nom, telephone, profession, ville, dateNaissance, caution ) => {
-  return dbManager.modifierMembre(id, nom, telephone, profession, ville, dateNaissance, caution );
-});
+ipcMain.handle(
+  "modifier-membre",
+  (_, id, nom, telephone, profession, ville, dateNaissance, caution) => {
+    return dbManager.modifierMembre(
+      id,
+      nom,
+      telephone,
+      profession,
+      ville,
+      dateNaissance,
+      caution
+    );
+  }
+);
 
 ipcMain.handle("supprimer-membre", (_event, id) => {
   try {
@@ -156,7 +178,12 @@ ipcMain.handle("get-mouvements", () => {
 
 ipcMain.handle("ajouter-mouvement", (_event, mouvement) => {
   try {
-    if (!mouvement || !mouvement.membreId || !mouvement.type || !mouvement.montant) {
+    if (
+      !mouvement ||
+      !mouvement.membreId ||
+      !mouvement.type ||
+      !mouvement.montant
+    ) {
       throw new Error("Champs requis manquants pour le mouvement");
     }
 
@@ -193,18 +220,28 @@ ipcMain.handle("get-soldes", () => {
 });
 
 // AJOUTER SOLDE CAISSE
-ipcMain.handle("ajouterCaisse", (_event, type, categorie, montant, description = "") => {
-  const date = new Date().toISOString();
-  const stmt = db.prepare("INSERT INTO caisse (date, type, categorie, montant, description) VALUES (?, ?, ?, ?, ?)");
-  stmt.run(date, type, categorie, montant, description);
-  return { success: true };
-});
-
+ipcMain.handle(
+  "ajouterCaisse",
+  (_event, type, categorie, montant, description = "") => {
+    const date = new Date().toISOString();
+    const stmt = db.prepare(
+      "INSERT INTO caisse (date, type, categorie, montant, description) VALUES (?, ?, ?, ?, ?)"
+    );
+    stmt.run(date, type, categorie, montant, description);
+    return { success: true };
+  }
+);
 
 // GET SOLDE CAISSE
 ipcMain.handle("getSoldeCaisse", () => {
-  const totalEntree = db.prepare("SELECT SUM(montant) as total FROM caisse WHERE type = 'entree'").get().total || 0;
-  const totalSortie = db.prepare("SELECT SUM(montant) as total FROM caisse WHERE type = 'sortie'").get().total || 0;
+  const totalEntree =
+    db
+      .prepare("SELECT SUM(montant) as total FROM caisse WHERE type = 'entree'")
+      .get().total || 0;
+  const totalSortie =
+    db
+      .prepare("SELECT SUM(montant) as total FROM caisse WHERE type = 'sortie'")
+      .get().total || 0;
   return totalEntree - totalSortie;
 });
 
@@ -212,7 +249,6 @@ ipcMain.handle("getSoldeCaisse", () => {
 ipcMain.handle("getHistoriqueCaisse", () => {
   return db.prepare("SELECT * FROM caisse ORDER BY date DESC").all();
 });
-
 
 // REMBOURSER CREDIT
 ipcMain.handle("rembourserCredit", (event, creditId, montantPaye) => {
@@ -224,31 +260,42 @@ ipcMain.handle("rembourserCredit", (event, creditId, montantPaye) => {
   const statut = nouveauReste <= 0 ? "remboursé" : credit.statut;
 
   // Mise à jour crédit
-  db.prepare(`UPDATE credits SET reste = ?, statut = ?, date_remboursement = ? WHERE id = ?`)
-    .run(nouveauReste, statut, nouveauReste <= 0 ? new Date().toISOString() : null, creditId);
+  db.prepare(
+    `UPDATE credits SET reste = ?, statut = ?, date_remboursement = ? WHERE id = ?`
+  ).run(
+    nouveauReste,
+    statut,
+    nouveauReste <= 0 ? new Date().toISOString() : null,
+    creditId
+  );
 
   // Ajout remboursement
-  db.prepare(`INSERT INTO remboursements (id_credit, montant, date) VALUES (?, ?, ?)`)
-    .run(creditId, montantPaye, new Date().toISOString());
+  db.prepare(
+    `INSERT INTO remboursements (id_credit, montant, date) VALUES (?, ?, ?)`
+  ).run(creditId, montantPaye, new Date().toISOString());
 
   // Ajouter l'intérêt partiel dans la caisse (exemple simple)
   // Calculer part intérêt = 20% du montant total du crédit, réparti proportionnellement au montant payé
   const interetTotal = credit.montant * 0.2;
   const interetPartiel = (montantPaye / credit.montant) * interetTotal;
 
-  db.prepare(`INSERT INTO caisse (date, type, categorie, montant, description) VALUES (?, ?, ?, ?, ?)`)
-    .run(new Date().toISOString(), 'entree', 'interet', interetPartiel, `Remboursement partiel crédit #${creditId}`);
+  db.prepare(
+    `INSERT INTO caisse (date, type, categorie, montant, description) VALUES (?, ?, ?, ?, ?)`
+  ).run(
+    new Date().toISOString(),
+    "entree",
+    "interet",
+    interetPartiel,
+    `Remboursement partiel crédit #${creditId}`
+  );
 
   return { success: true };
 });
 
-
-ipcMain.handle('getMouvementsCaisse', () => {
-  const stmt = db.prepare('SELECT * FROM mouvements ORDER BY date DESC');
+ipcMain.handle("getMouvementsCaisse", () => {
+  const stmt = db.prepare("SELECT * FROM mouvements ORDER BY date DESC");
   return stmt.all(); // Pas besoin d'async ni de Promise ici
 });
-
-
 
 ipcMain.handle("get-credits", () => {
   try {
@@ -293,19 +340,30 @@ ipcMain.handle("accorder-credit", (_event, data) => {
       INSERT INTO credits (id_membre, montant_initial, montant_a_rembourser, reste, date_accord, date_expiration, statut)
       VALUES (?, ?, ?, ?, ?, ?, 'actif')
     `);
-    stmt.run(id_membre, montant, montant_a_rembourser, montant_a_rembourser, dateAccord, date_expiration);
+    stmt.run(
+      id_membre,
+      montant,
+      montant_a_rembourser,
+      montant_a_rembourser,
+      dateAccord,
+      date_expiration
+    );
 
     // Enregistrement dans mouvements (optionnel)
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO mouvements (membreId, type, montant, motif, date)
       VALUES (?, 'credit', ?, 'Accord de prêt', ?)
-    `).run(id_membre, montant, dateAccord);
+    `
+    ).run(id_membre, montant, dateAccord);
 
     // Mise à jour du solde dans comptes (si tu gères ça)
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE comptes SET solde = solde + ?
       WHERE id_membre = ? AND type = 'credit'
-    `).run(montant, id_membre);
+    `
+    ).run(montant, id_membre);
 
     return { success: true };
   } catch (error) {
@@ -314,8 +372,4 @@ ipcMain.handle("accorder-credit", (_event, data) => {
   }
 });
 
-
-
-
 // Autres handlers si besoin ...
-
