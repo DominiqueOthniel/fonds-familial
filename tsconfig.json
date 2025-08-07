@@ -1,0 +1,45 @@
+{
+  "compilerOptions": {
+    // Fichiers source et destination
+    "rootDir": "./src",
+    "outDir": "./dist",
+
+    // Configuration du module
+    "module": "ESNext",
+    "target": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+
+    // Génération de fichiers
+    "sourceMap": true,
+    "declaration": true,
+    "declarationMap": true,
+
+    // Sécurité de typage
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "strict": true,
+
+    // JSX et modules
+    "jsx": "react-jsx",
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "noUncheckedSideEffectImports": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+
+    // Résolution des chemins d'import
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "components/*": ["src/components/*"],
+      "ui/*": ["src/components/ui/*"],
+      "hooks/*": ["src/hooks/*"],
+      "lib/*": ["src/lib/*"]
+    }
+  },
+  /* "include": ["src", "src/electron/main.js", "preload.js"],
+  "exclude": ["node_modules", "dist", "src/electron"] */
+  "include": ["src"],
+  "exclude": ["src/electron"]
+}

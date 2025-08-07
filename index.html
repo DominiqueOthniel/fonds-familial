@@ -1,21 +1,12 @@
+<!-- index.html -->
 <!DOCTYPE html>
 <html lang="fr">
-<head>
-  <meta charset="UTF-8" />
-  <title>Connexion - Fonds Familial</title>
-  <script defer src="renderer.js"></script>
-</head>
-<body>
-  <h2>Connexion</h2>
-  <form id="login-form">
-    <label>Email:
-      <input type="email" id="email" required />
-    </label><br/>
-    <label>Mot de passe:
-      <input type="password" id="password" required />
-    </label><br/>
-    <button type="submit">Connexion</button>
-    <p id="error-msg" style="color:red;"></p>
-  </form>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Fonds Familial</title>
+  </head>
+  <body class="h-full">
+    <div id="root"></div>
+    <script type="module" src="./src/ui/main.tsx"></script>
+  </body>
 </html>
