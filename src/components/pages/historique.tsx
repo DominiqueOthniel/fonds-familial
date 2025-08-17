@@ -39,6 +39,8 @@ interface Transaction {
   montant: number;
   motif: string;
   date: string;
+  updatedAt?: string;
+  sessionId?: number;
 }
 
 interface Member {
@@ -58,18 +60,26 @@ export function Historique() {
   const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [memberFilter, setMemberFilter] = useState("all");
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [sessionFilter, setSessionFilter] = useState<string>("all");
 
   // Charger les données depuis la base de données
   const loadData = async () => {
     try {
       setLoading(true);
       if (window.electronAPI) {
-        const [transactionsData, membersData] = await Promise.all([
-          window.electronAPI.getMouvements(),
+        const [transactionsData, membersData, sessionsData] = await Promise.all([
+          window.electronAPI.getMouvements(
+            sessionFilter !== "all"
+              ? { sessionId: Number(sessionFilter) }
+              : undefined
+          ),
           window.electronAPI.getMembres(),
+          window.electronAPI.getSessions(),
         ]);
         setTransactions(transactionsData);
         setMembers(membersData);
+        setSessions(sessionsData.sessions || []);
       }
     } catch (error) {
       console.error("Erreur lors du chargement des données:", error);
@@ -81,6 +91,26 @@ export function Historique() {
 
   useEffect(() => {
     loadData();
+  }, [sessionFilter]);
+
+  // Écouter les événements de suppression de crédit pour recharger les données
+  useEffect(() => {
+    if (window.electronAPI) {
+      const handleCreditDeleted = (creditId: number) => {
+        console.log(
+          `Crédit ${creditId} supprimé, rechargement de l'historique...`
+        );
+        loadData();
+      };
+
+      window.electronAPI.onCreditDeleted(handleCreditDeleted);
+
+      // Cleanup function
+      return () => {
+        // Note: Dans une vraie application, on devrait avoir une méthode pour retirer les listeners
+        // Mais pour l'instant, on laisse le listener actif
+      };
+    }
   }, []);
 
   const filteredTransactions = transactions.filter((transaction) => {
@@ -94,7 +124,9 @@ export function Historique() {
     const matchesType = typeFilter === "all" || transaction.type === typeFilter;
     const matchesMember =
       memberFilter === "all" || transaction.membreNom === memberFilter;
-    return matchesSearch && matchesType && matchesMember;
+    const matchesSession =
+      sessionFilter === "all" || Number(sessionFilter) === Number(transaction.sessionId);
+    return matchesSearch && matchesType && matchesMember && matchesSession;
   });
 
   const getTypeColor = (type: string) => {
@@ -175,7 +207,7 @@ export function Historique() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-[95vw] mx-auto">
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">
@@ -201,7 +233,7 @@ export function Historique() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">
-              {totalIn.toLocaleString()} FCFA
+              {totalIn.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
             </div>
           </CardContent>
         </Card>
@@ -214,7 +246,7 @@ export function Historique() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">
-              {totalOut.toLocaleString()} FCFA
+              {totalOut.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
             </div>
           </CardContent>
         </Card>
@@ -231,7 +263,7 @@ export function Historique() {
                 totalIn - totalOut >= 0 ? "text-green-600" : "text-red-600"
               }`}
             >
-              {(totalIn - totalOut).toLocaleString()} FCFA
+              {(totalIn - totalOut).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
             </div>
           </CardContent>
         </Card>
@@ -250,11 +282,11 @@ export function Historique() {
                   placeholder="Rechercher par membre ou motif..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 w-64"
+                  className="pl-10 w-72"
                 />
               </div>
               <Select value={typeFilter} onValueChange={setTypeFilter}>
-                <SelectTrigger className="w-48">
+                <SelectTrigger className="w-56">
                   <SelectValue placeholder="Filtrer par type" />
                 </SelectTrigger>
                 <SelectContent>
@@ -293,6 +325,19 @@ export function Historique() {
                   ))}
                 </SelectContent>
               </Select>
+              <Select value={sessionFilter} onValueChange={setSessionFilter}>
+                <SelectTrigger className="w-56">
+                  <SelectValue placeholder="Filtrer par session" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Toutes les sessions</SelectItem>
+                  {sessions.map((s) => (
+                    <SelectItem key={s.id} value={String(s.id)}>
+                      {s.nom || `Session ${s.numero}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </CardHeader>
@@ -316,50 +361,76 @@ export function Historique() {
               </p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Membre</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Montant</TableHead>
-                  <TableHead>Motif</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredTransactions.map((transaction) => (
-                  <TableRow key={transaction.id}>
-                    <TableCell>
-                      {new Date(transaction.date).toLocaleDateString("fr-FR")}
-                    </TableCell>
-                    <TableCell className="font-medium">
-                      {transaction.membreNom}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={getTypeColor(transaction.type)}
-                      >
-                        {getTypeLabel(transaction.type)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={`font-medium ${
-                          transaction.montant >= 0
-                            ? "text-green-600"
-                            : "text-red-600"
-                        }`}
-                      >
-                        {transaction.montant >= 0 ? "+" : ""}
-                        {transaction.montant.toLocaleString()} FCFA
-                      </span>
-                    </TableCell>
-                    <TableCell>{transaction.motif}</TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="whitespace-nowrap">Date</TableHead>
+                    <TableHead className="whitespace-nowrap">Membre</TableHead>
+                    <TableHead className="whitespace-nowrap">Type</TableHead>
+                    <TableHead className="whitespace-nowrap">Montant</TableHead>
+                    <TableHead className="min-w-[320px]">Motif</TableHead>
+                    <TableHead className="whitespace-nowrap">Session</TableHead>
+                    <TableHead className="whitespace-nowrap">Modifié le</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {filteredTransactions.map((transaction) => (
+                    <TableRow key={transaction.id}>
+                      <TableCell>
+                        {new Date(transaction.date).toLocaleDateString("fr-FR")}
+                      </TableCell>
+                      <TableCell className="font-medium">
+                        {transaction.membreNom}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={getTypeColor(transaction.type)}
+                        >
+                          {getTypeLabel(transaction.type)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className={`font-medium ${
+                            transaction.montant >= 0
+                              ? "text-green-600"
+                              : "text-red-600"
+                          }`}
+                        >
+                          {transaction.montant >= 0 ? "+" : ""}
+                          {transaction.montant.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-slate-700">
+                        {transaction.motif}
+                      </TableCell>
+                      <TableCell className="text-slate-600">
+                        {(() => {
+                          const s = sessions.find((ss) => Number(ss.id) === Number(transaction.sessionId));
+                          return s ? (s.nom || `Session ${s.numero}`) : "—";
+                        })()}
+                      </TableCell>
+                      <TableCell>
+                        {transaction.updatedAt
+                          ? new Date(transaction.updatedAt).toLocaleString(
+                              "fr-FR",
+                              {
+                                day: "2-digit",
+                                month: "2-digit",
+                                year: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              }
+                            )
+                          : "—"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>

@@ -19,6 +19,7 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "strict": true,
+    "esModuleInterop": true,
 
     // JSX et modules
     "jsx": "react-jsx",

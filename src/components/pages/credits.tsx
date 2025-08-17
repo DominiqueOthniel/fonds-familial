@@ -55,6 +55,8 @@ import {
 import { toast } from "sonner";
 import "../../types/electron-api.d.ts"; // Import des types Electron API
 
+import { useRole } from "../../hooks/useRole";
+
 interface Credit {
   id: number;
   id_membre: number;
@@ -64,7 +66,11 @@ interface Credit {
   reste: number;
   date_accord: string;
   date_expiration: string;
+  date_heure_echeance: string;
+  heure_echeance: string;
   statut: "actif" | "remboursé" | "en_retard";
+  penalite_due?: number;
+  total_rembourse?: number;
 }
 
 interface Member {
@@ -78,6 +84,7 @@ interface Member {
 }
 
 export function Credits() {
+  const { role } = useRole();
   const [credits, setCredits] = useState<Credit[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
@@ -92,9 +99,21 @@ export function Credits() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedCredit, setSelectedCredit] = useState<Credit | null>(null);
   const [repaymentAmount, setRepaymentAmount] = useState(0);
-  const [newCredit, setNewCredit] = useState({
+  const [repaymentAmountStr, setRepaymentAmountStr] = useState("");
+  const [fondsDisponible, setFondsDisponible] = useState(0);
+  const [totalInteretsGeneres, setTotalInteretsGeneres] = useState(0);
+  const [newCredit, setNewCredit] = useState<{
+    memberId: number;
+    montant: number;
+    montantStr: string;
+    date_heure_echeance: string;
+    heure_echeance: string;
+  }>({
     memberId: 0,
     montant: 0,
+    montantStr: "",
+    date_heure_echeance: "",
+    heure_echeance: "10:30:00",
   });
 
   // Charger les données depuis la base de données
@@ -102,12 +121,15 @@ export function Credits() {
     try {
       setLoading(true);
       if (window.electronAPI) {
-        const [creditsData, membersData] = await Promise.all([
+        const [creditsData, membersData, fondsData] = await Promise.all([
           window.electronAPI.getCredits(),
           window.electronAPI.getMembres(),
+          window.electronAPI.getSoldeFonds(),
         ]);
         setCredits(creditsData);
         setMembers(membersData);
+        setFondsDisponible(fondsData.solde);
+        setTotalInteretsGeneres(fondsData.totalInterets || 0);
       }
     } catch (error) {
       console.error("Erreur lors du chargement des données:", error);
@@ -119,6 +141,42 @@ export function Credits() {
 
   useEffect(() => {
     loadData();
+  }, []);
+
+  // Écouter les événements de suppression de crédit pour recharger les données
+  useEffect(() => {
+    if (window.electronAPI) {
+      const handleCreditDeleted = (creditId: number) => {
+        console.log(`Crédit ${creditId} supprimé, rechargement des crédits...`);
+        loadData();
+      };
+      const handleCreditUpdated = (creditId: number) => {
+        console.log(`Crédit ${creditId} mis à jour, rechargement des crédits...`);
+        loadData();
+      };
+
+      window.electronAPI.onCreditDeleted(handleCreditDeleted);
+      if (window.electronAPI.onCreditUpdated) {
+        window.electronAPI.onCreditUpdated(handleCreditUpdated);
+      }
+
+      // Cleanup function
+      return () => {
+        // Retirer le listener pour éviter les memory leaks
+        if (
+          window.electronAPI &&
+          window.electronAPI.removeCreditDeletedListener
+        ) {
+          window.electronAPI.removeCreditDeletedListener(handleCreditDeleted);
+        }
+        if (
+          window.electronAPI &&
+          window.electronAPI.removeCreditUpdatedListener
+        ) {
+          window.electronAPI.removeCreditUpdatedListener(handleCreditUpdated);
+        }
+      };
+    }
   }, []);
 
   const filteredCredits = credits.filter((credit) => {
@@ -201,24 +259,54 @@ export function Credits() {
         return;
       }
 
-      const dateEcheance = calculateDueDate(new Date());
+      // Vérifier si le membre a déjà un crédit en cours
+      const existingCredit = credits.find(
+        (credit) =>
+          credit.id_membre === newCredit.memberId && credit.statut === "actif"
+      );
+
+      if (existingCredit) {
+        toast.error(
+          `${
+            selectedMember.nom
+          } a déjà un crédit en cours de ${existingCredit.montant_initial.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA. Impossible d'octroyer un nouveau crédit.`
+        );
+        return;
+      }
+
+      // Utiliser la date sélectionnée par l'utilisateur (pas de calcul automatique)
+      const dateExpiration = newCredit.date_heure_echeance; // format YYYY-MM-DD
+      const dateHeureEcheance = newCredit.date_heure_echeance;
+      const heureEcheance = newCredit.heure_echeance || "10:30:00";
+
       const creditData = {
         id_membre: newCredit.memberId,
         montant: newCredit.montant,
-        date_expiration: dateEcheance.toISOString().split("T")[0],
+        date_expiration: dateExpiration as string,
+        date_heure_echeance: dateHeureEcheance as string,
+        heure_echeance: heureEcheance as string,
       };
+
+      // Validation supplémentaire
+      if (!creditData.date_heure_echeance) {
+        toast.error("Veuillez sélectionner une date d'échéance");
+        return;
+      }
 
       const result = await window.electronAPI.accorderCredit(creditData);
 
       if (result.success) {
         toast.success(
-          `Crédit de ${newCredit.montant.toLocaleString()} FCFA accordé à ${
+          `Crédit de ${newCredit.montant.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA accordé à ${
             selectedMember.nom
           }.`
         );
         setNewCredit({
           memberId: 0,
           montant: 0,
+          montantStr: "",
+          date_heure_echeance: "",
+          heure_echeance: "10:30:00",
         });
         setIsAddDialogOpen(false);
         loadData(); // Recharger les données
@@ -234,6 +322,7 @@ export function Credits() {
   const handleRepayment = (credit: Credit) => {
     setSelectedCredit(credit);
     setRepaymentAmount(0);
+    setRepaymentAmountStr("");
     setIsRepaymentDialogOpen(true);
   };
 
@@ -251,7 +340,7 @@ export function Credits() {
 
       if (result.success) {
         toast.success(
-          `Remboursement de ${montant.toLocaleString()} FCFA enregistré avec succès.`
+          `Remboursement de ${montant.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA enregistré avec succès.`
         );
         loadData(); // Recharger les données
       } else {
@@ -267,13 +356,14 @@ export function Credits() {
 
   const handleValidateRepayment = () => {
     if (selectedCredit && repaymentAmount > 0) {
-      const montantRestant = selectedCredit.reste;
-      const montantAValider = Math.min(repaymentAmount, montantRestant);
+      const montantTotalDu = getTotalDueNow(selectedCredit);
+      const montantAValider = Math.min(repaymentAmount, montantTotalDu);
 
       rembourserCredit(selectedCredit.id, montantAValider);
       setIsRepaymentDialogOpen(false);
       setSelectedCredit(null);
       setRepaymentAmount(0);
+      setRepaymentAmountStr("");
     }
   };
 
@@ -311,13 +401,64 @@ export function Credits() {
     setIsDeleteDialogOpen(true);
   };
 
+  // Montant total déjà remboursé
+  const getTotalRepaidNow = (credit: Credit) => {
+    // Utilise la somme réelle des remboursements si fournie par le backend
+    if (typeof credit.total_rembourse === "number") return Math.max(0, credit.total_rembourse);
+    // Calcul inverse : montant total à rembourser - reste principal
+    const totalARembourser = credit.montant_a_rembourser || 0;
+    const restePrincipal = credit.reste || 0;
+    return Math.max(0, totalARembourser - restePrincipal);
+  };
+
   const getProgressPercentage = (credit: Credit) => {
-    const totalRembourse = credit.montant_a_rembourser - credit.reste;
-    return (totalRembourse / credit.montant_a_rembourser) * 100;
+    const totalRepaid = getTotalRepaidNow(credit);
+    const totalDue = getTotalDueNow(credit);
+    const total = totalRepaid + totalDue;
+    if (total <= 0) return 0;
+    return (totalRepaid / total) * 100;
+  };
+
+  // Fonction pour vérifier si un crédit est en retard
+  const isCreditEnRetard = (credit: Credit | null) => {
+    if (!credit || credit.statut === "remboursé") return false;
+
+    // Avec le nouveau système automatique, on vérifie uniquement le statut en base
+    // Les pénalités sont appliquées automatiquement à l'ouverture de chaque session
+    return credit.statut === "en_retard";
+  };
+
+  // Montant total fixe à rembourser (intérêts inclus, + pénalité si en retard)
+  const getFixedTotal = (credit: Credit | null) => {
+    if (!credit) return 0;
+    const base = credit.montant_a_rembourser || 0;
+    // Avec le système automatique, la pénalité est toujours incluse si elle existe
+    const penalty = credit.penalite_due || 0;
+    return Math.max(0, base + penalty);
+  };
+
+  // Montant restant à payer maintenant - inclut le principal restant et les pénalités
+  const getTotalDueNow = (credit: Credit | null) => {
+    if (!credit) return 0;
+    // Inclure le principal restant ET les pénalités dues
+    const principalRestant = Math.max(0, credit.reste || 0);
+    const penalitesRestantes = Math.max(0, credit.penalite_due || 0);
+    return principalRestant + penalitesRestantes;
+  };
+
+  // Montant de la pénalité due (fixée une seule fois)
+  const getPenaltyOnly = (credit: Credit | null) => {
+    if (!credit) return 0;
+    // Avec le système automatique, la pénalité est toujours disponible si elle existe
+    return Math.max(0, credit.penalite_due || 0);
   };
 
   const activeCredits = credits.filter((c) => c.statut === "actif");
   const completedCredits = credits.filter((c) => c.statut === "remboursé");
+  const penalitesDues = credits.reduce(
+    (sum, c) => sum + (c.statut !== "remboursé" ? (c.penalite_due || 0) : 0),
+    0
+  );
 
   if (loading) {
     return (
@@ -340,18 +481,61 @@ export function Credits() {
           <p className="text-slate-600 mt-2">
             Gérez les prêts accordés aux membres
           </p>
+          
+          <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+            <p className="text-sm text-green-800">
+              <strong>🔄 Système de Pénalités Automatique :</strong> Les pénalités sur les crédits non remboursés 
+              sont appliquées automatiquement à l'ouverture de chaque nouvelle session (20% du montant à rembourser). 
+              Plus besoin de calendrier ou de vérification manuelle !
+            </p>
+          </div>
+          
+          <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+            <p className="text-xs text-blue-800">
+              💡 Le "Reste à rembourser" est maintenant stocké directement en base de données pour de meilleures performances.
+              Utilisez le bouton "Synchroniser" pour mettre à jour les données existantes.
+            </p>
+          </div>
         </div>
         <div className="flex gap-3">
+          <Button
+            onClick={async () => {
+              try {
+                if (window.electronAPI) {
+                  const result = await window.electronAPI.syncCreditsReste();
+                  if (result.success) {
+                    toast.success(`Synchronisation terminée : ${result.updatedCount} crédits mis à jour`);
+                    loadData();
+                  } else {
+                    toast.error(result.message || "Erreur lors de la synchronisation");
+                  }
+                }
+              } catch (error) {
+                console.error("Erreur synchronisation:", error);
+                toast.error("Erreur lors de la synchronisation");
+              }
+            }}
+            variant="outline"
+            className="border-blue-500 text-blue-600 hover:bg-blue-50"
+          >
+            <Loader2 className="h-4 w-4 mr-2" />
+            Synchroniser
+          </Button>
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="bg-red-600 hover:bg-red-700">
-                <Plus className="h-4 w-4 mr-2" />
-                Nouveau Crédit
-              </Button>
-            </DialogTrigger>
+            {role === "admin" && (
+              <DialogTrigger asChild>
+                <Button className="bg-red-600 hover:bg-red-700">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Nouveau Crédit
+                </Button>
+              </DialogTrigger>
+            )}
             <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle>Accorder un nouveau crédit</DialogTitle>
+                <DialogDescription>
+                  Accordez un nouveau crédit à un membre du fonds familial.
+                </DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
                 <div>
@@ -365,49 +549,129 @@ export function Credits() {
                       <SelectValue placeholder="Sélectionner un membre" />
                     </SelectTrigger>
                     <SelectContent>
-                      {members.map((member) => (
-                        <SelectItem
-                          key={member.id}
-                          value={member.id.toString()}
-                        >
-                          {member.nom}
-                        </SelectItem>
-                      ))}
+                      {members
+                        .filter(member => {
+                          // Filtrer les membres qui n'ont pas de crédit en cours
+                          const creditEnCours = credits.find(c => 
+                            c.id_membre === member.id && 
+                            c.statut !== 'remboursé'
+                          );
+                          return !creditEnCours;
+                        })
+                        .map((member) => (
+                          <SelectItem
+                            key={member.id}
+                            value={member.id.toString()}
+                          >
+                            {member.nom}
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
+                  
+                  {/* Information sur les membres avec crédit en cours */}
+                  <div className="mt-2 text-xs text-slate-500">
+                    {members.filter(member => {
+                      const creditEnCours = credits.find(c => 
+                        c.id_membre === member.id && 
+                        c.statut !== 'remboursé'
+                      );
+                      return creditEnCours;
+                    }).length > 0 && (
+                      <span className="text-orange-600">
+                        ℹ️ Certains membres ont déjà un crédit en cours et ne peuvent pas en recevoir un nouveau
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <Label htmlFor="montant">Montant du crédit (FCFA)</Label>
                   <Input
                     id="montant"
                     type="number"
-                    value={newCredit.montant}
-                    onChange={(e) =>
+                    value={newCredit.montantStr}
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/[^0-9]/g, "");
                       setNewCredit({
                         ...newCredit,
-                        montant: Number(e.target.value),
-                      })
-                    }
+                        montantStr: v,
+                        montant: v === "" ? 0 : Number(v),
+                      });
+                    }}
                     placeholder="2000000"
                   />
+                  
+                  {/* Affichage du fonds disponible et vérification */}
+                  <div className="mt-2 p-3 bg-slate-50 rounded-lg border">
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-slate-600">Fonds disponible :</span>
+                      <span className="font-medium text-slate-800">
+                        {fondsDisponible.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                      </span>
+                    </div>
+                    {newCredit.montant > 0 && (
+                      <div className="mt-2">
+                        {newCredit.montant > fondsDisponible ? (
+                          <div className="text-red-600 text-sm font-medium">
+                            ⚠️ Montant insuffisant ! Le crédit dépasse le fonds disponible de {(newCredit.montant - fondsDisponible).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                          </div>
+                        ) : (
+                          <div className="text-green-600 text-sm">
+                            ✅ Montant disponible dans le fonds
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <Label>Date d'échéance (optionnelle)</Label>
+                  <div className="p-4 border border-slate-200 rounded-lg bg-slate-50">
+                    <div className="text-sm text-slate-600 mb-3">
+                      <strong>💡 Système de pénalités automatique :</strong> Les pénalités sont appliquées 
+                      automatiquement à l'ouverture de chaque nouvelle session, peu importe la date d'échéance.
+                    </div>
+                    <Input
+                      type="date"
+                      value={newCredit.date_heure_echeance}
+                      onChange={(e) =>
+                        setNewCredit({
+                          ...newCredit,
+                          date_heure_echeance: e.target.value,
+                        })
+                      }
+                      className="w-full"
+                    />
+                    <div className="mt-2 text-xs text-slate-500">
+                      Cette date sert uniquement de référence. Les pénalités s'appliquent automatiquement.
+                    </div>
+                  </div>
                 </div>
                 <div className="p-3 bg-blue-50 rounded-lg">
                   <p className="text-sm text-blue-800">
                     <strong>Intérêt fixe :</strong> 20%
                     <br />
                     <strong>Montant total à rembourser :</strong>{" "}
-                    {(newCredit.montant * 1.2).toLocaleString()} FCFA
+                    {(newCredit.montant * 1.2).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                     <br />
-                    <strong>Date d'échéance :</strong> 31 août{" "}
-                    {calculateDueDate(new Date()).getFullYear()}
+                    <strong>Date d'échéance :</strong>{" "}
+                    {newCredit.date_heure_echeance
+                      ? new Date(newCredit.date_heure_echeance).toLocaleDateString("fr-FR")
+                      : "Non définie"}
                   </p>
                 </div>
                 <Button
                   onClick={handleAddCredit}
                   className="w-full bg-red-600 hover:bg-red-700"
-                  disabled={!newCredit.memberId || !newCredit.montant}
+                  disabled={
+                    role !== "admin" ||
+                    !newCredit.memberId ||
+                    !newCredit.montant ||
+                    !newCredit.date_heure_echeance ||
+                    newCredit.montant > fondsDisponible
+                  }
                 >
-                  Accorder le crédit
+                  {newCredit.montant > fondsDisponible ? "Fonds insuffisant" : "Accorder le crédit"}
                 </Button>
               </div>
             </DialogContent>
@@ -453,7 +717,7 @@ export function Credits() {
             <div className="text-2xl font-bold text-orange-600">
               {credits
                 .reduce((sum, c) => sum + c.montant_initial, 0)
-                .toLocaleString()}{" "}
+                .toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}{" "}
               FCFA
             </div>
           </CardContent>
@@ -467,14 +731,7 @@ export function Credits() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-purple-600">
-              {credits
-                .reduce(
-                  (sum, c) =>
-                    sum + (c.montant_a_rembourser - c.montant_initial),
-                  0
-                )
-                .toLocaleString()}{" "}
-              FCFA
+              {(totalInteretsGeneres + penalitesDues).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
             </div>
           </CardContent>
         </Card>
@@ -504,7 +761,7 @@ export function Credits() {
                   <SelectItem value="remboursé">Remboursé</SelectItem>
                 </SelectContent>
               </Select>
-              {selectedCredits.length > 0 && (
+              {selectedCredits.length > 0 && role === "admin" && (
                 <>
                   <Button
                     onClick={() => setIsMultiDeleteDialogOpen(true)}
@@ -583,6 +840,14 @@ export function Credits() {
                 Aucun crédit ne correspond à vos critères de recherche
               </p>
             </div>
+          ) : filteredCredits.length === 0 ? (
+            <div className="text-center py-8 text-slate-500">
+              <CreditCard className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p className="text-lg font-medium">Aucun crédit enregistré</p>
+              <p className="text-sm">
+                Commencez par ajouter votre premier crédit.
+              </p>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
@@ -599,8 +864,10 @@ export function Credits() {
                     </TableHead>
                     <TableHead>Membre</TableHead>
                     <TableHead>Date de crédit</TableHead>
-                    <TableHead>Montant</TableHead>
+                    <TableHead>Montant initial</TableHead>
+                    <TableHead>Reste à rembourser</TableHead>
                     <TableHead>Progression</TableHead>
+                    <TableHead>Échéance</TableHead>
                     <TableHead>Statut</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
@@ -625,7 +892,21 @@ export function Credits() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {credit.montant_initial.toLocaleString()} FCFA
+                        <div className="font-medium">
+                          {credit.montant_initial.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-1">
+                          <div className="font-medium text-red-600">
+                            {getTotalDueNow(credit).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                          </div>
+                          {isCreditEnRetard(credit) && (
+                            <div className="text-xs text-red-600">
+                              Inclut {getPenaltyOnly(credit).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA pénalités
+                            </div>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <div className="space-y-1">
@@ -639,9 +920,32 @@ export function Credits() {
                         </div>
                       </TableCell>
                       <TableCell>
+                        <div className="text-sm">
+                          <div className="font-medium">
+                            {credit.date_heure_echeance && credit.heure_echeance
+                              ? new Date(
+                                  credit.date_heure_echeance +
+                                    "T" +
+                                    credit.heure_echeance
+                                ).toLocaleDateString("fr-FR")
+                              : "Non définie"}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {credit.heure_echeance || "10:30:00"}
+                          </div>
+                          {isCreditEnRetard(credit) && (
+                            <div className="text-xs text-red-600 font-medium">
+                              ⚠️ En retard
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
                         <Badge
                           variant={
                             credit.statut === "actif"
+                              ? "destructive"
+                              : credit.statut === "en_retard"
                               ? "destructive"
                               : "default"
                           }
@@ -650,6 +954,11 @@ export function Credits() {
                             <>
                               <AlertCircle className="h-3 w-3 mr-1" />
                               Actif
+                            </>
+                          ) : credit.statut === "en_retard" ? (
+                            <>
+                              <AlertTriangle className="h-3 w-3 mr-1" />
+                              En retard
                             </>
                           ) : (
                             <>
@@ -673,7 +982,8 @@ export function Credits() {
                               <Eye className="mr-2 h-4 w-4" />
                               Détails
                             </DropdownMenuItem>
-                            {credit.statut === "actif" && (
+                            {(credit.statut === "actif" ||
+                              credit.statut === "en_retard") && (
                               <DropdownMenuItem
                                 onClick={() => handleRepayment(credit)}
                               >
@@ -681,13 +991,15 @@ export function Credits() {
                                 Rembourser
                               </DropdownMenuItem>
                             )}
-                            <DropdownMenuItem
-                              onClick={() => openDeleteDialog(credit)}
-                              className="text-red-600"
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Supprimer
-                            </DropdownMenuItem>
+                            {role === "admin" && (
+                              <DropdownMenuItem
+                                onClick={() => openDeleteDialog(credit)}
+                                className="text-red-600"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Supprimer
+                              </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -735,6 +1047,27 @@ export function Credits() {
                       </span>
                     </div>
                     <div className="flex justify-between">
+                      <span className="text-slate-600">
+                        Date et heure d'échéance :
+                      </span>
+                      <span className="font-medium">
+                        {selectedCredit.date_heure_echeance &&
+                        selectedCredit.heure_echeance
+                          ? new Date(
+                              selectedCredit.date_heure_echeance +
+                                "T" +
+                                selectedCredit.heure_echeance
+                            ).toLocaleString("fr-FR")
+                          : "Non définie"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">Reste à rembourser</span>
+                      <span className="font-medium text-red-600">
+                        {getTotalDueNow(selectedCredit).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
                       <span className="text-slate-600">Taux d'intérêt :</span>
                       <span className="font-medium">
                         {/* selectedCredit.interet is not a property of Credit */}
@@ -753,7 +1086,7 @@ export function Credits() {
                     <div className="flex justify-between">
                       <span className="text-slate-600">Montant initial :</span>
                       <span className="font-medium">
-                        {selectedCredit.montant_initial.toLocaleString()} FCFA
+                        {selectedCredit?.montant_initial.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                       </span>
                     </div>
                     <div className="flex justify-between">
@@ -766,13 +1099,30 @@ export function Credits() {
                         FCFA
                       </span>
                     </div>
+                    {isCreditEnRetard(selectedCredit) && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">
+                          Pénalités (20%) :
+                        </span>
+                        <span className="font-medium text-red-600">
+                          {getPenaltyOnly(selectedCredit).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between border-t pt-2">
                       <span className="text-slate-600 font-medium">
-                        Total à rembourser :
+                        Montant total (fixe) :
                       </span>
                       <span className="font-bold">
-                        {selectedCredit.montant_a_rembourser.toLocaleString()}{" "}
-                        FCFA
+                        {getFixedTotal(selectedCredit).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-t pt-2">
+                      <span className="text-slate-600 font-medium">
+                        Reste à rembourser (actuel) :
+                      </span>
+                      <span className="font-bold">
+                        {getTotalDueNow(selectedCredit).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                       </span>
                     </div>
                   </div>
@@ -790,15 +1140,10 @@ export function Credits() {
                   />
                   <div className="flex justify-between text-sm">
                     <span className="text-green-600 font-medium">
-                      Remboursé :{" "}
-                      {(
-                        selectedCredit.montant_a_rembourser -
-                        selectedCredit.reste
-                      ).toLocaleString()}{" "}
-                      FCFA
+                      Remboursé : {getTotalRepaidNow(selectedCredit).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                     </span>
                     <span className="text-red-600 font-medium">
-                      Restant : {selectedCredit.reste.toLocaleString()} FCFA
+                      Restant : {getTotalDueNow(selectedCredit).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                     </span>
                   </div>
                   <div className="text-center">
@@ -817,7 +1162,8 @@ export function Credits() {
                 >
                   Fermer
                 </Button>
-                {selectedCredit.statut === "actif" && (
+                {(selectedCredit.statut === "actif" ||
+                  selectedCredit.statut === "en_retard") && (
                   <Button
                     onClick={() => {
                       setIsDetailsDialogOpen(false);
@@ -843,6 +1189,9 @@ export function Credits() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Remboursement de crédit</DialogTitle>
+            <DialogDescription>
+              Enregistrez un remboursement pour ce crédit.
+            </DialogDescription>
           </DialogHeader>
           {selectedCredit && (
             <div className="space-y-4">
@@ -856,20 +1205,25 @@ export function Credits() {
                     <span className="font-medium">{selectedCredit.nom}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-600">Montant total :</span>
+                    <span className="text-slate-600">
+                      Montant total à rembourser :
+                    </span>
                     <span className="font-medium">
-                      {selectedCredit.montant_a_rembourser.toLocaleString()}{" "}
-                      FCFA
+                      {getFixedTotal(selectedCredit).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">
+                      Reste à rembourser :
+                    </span>
+                    <span className="font-medium text-red-600">
+                      {getTotalDueNow(selectedCredit).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-600">Déjà remboursé :</span>
                     <span className="font-medium text-green-600">
-                      {(
-                        selectedCredit.montant_a_rembourser -
-                        selectedCredit.reste
-                      ).toLocaleString()}{" "}
-                      FCFA
+                      {getTotalRepaidNow(selectedCredit).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                     </span>
                   </div>
                   <div className="flex justify-between border-t pt-2">
@@ -877,7 +1231,7 @@ export function Credits() {
                       Montant restant :
                     </span>
                     <span className="font-bold text-red-600">
-                      {selectedCredit.reste.toLocaleString()} FCFA
+                      {getTotalDueNow(selectedCredit).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                     </span>
                   </div>
                 </div>
@@ -890,13 +1244,18 @@ export function Credits() {
                 <Input
                   id="repaymentAmount"
                   type="number"
-                  value={repaymentAmount}
-                  onChange={(e) => setRepaymentAmount(Number(e.target.value))}
+                  value={repaymentAmountStr}
+                  onChange={(e) => {
+                    const v = e.target.value.replace(/[^0-9]/g, "");
+                    setRepaymentAmountStr(v);
+                    setRepaymentAmount(v === "" ? 0 : Number(v));
+                  }}
                   placeholder="Saisir le montant"
-                  max={selectedCredit.reste}
+                  max={selectedCredit ? getTotalDueNow(selectedCredit) : undefined}
                 />
                 <p className="text-xs text-slate-500 mt-1">
-                  Maximum : {selectedCredit.reste.toLocaleString()} FCFA
+                  Maximum : {getTotalDueNow(selectedCredit).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}{" "}
+                  FCFA
                 </p>
               </div>
 
@@ -905,29 +1264,11 @@ export function Credits() {
                   <p className="text-sm text-blue-800">
                     <strong>Nouveau solde après remboursement :</strong>
                     <br />
-                    Remboursé :{" "}
-                    {(
-                      selectedCredit.montant_a_rembourser -
-                      selectedCredit.reste +
-                      repaymentAmount
-                    ).toLocaleString()}{" "}
-                    FCFA
+                    Remboursé : {(getTotalRepaidNow(selectedCredit) + repaymentAmount).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                     <br />
-                    Restant :{" "}
-                    {(
-                      selectedCredit.reste - repaymentAmount
-                    ).toLocaleString()}{" "}
-                    FCFA
+                    Restant : {Math.max(0, getTotalDueNow(selectedCredit) - repaymentAmount).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}{" "}FCFA
                     <br />
-                    Progression :{" "}
-                    {Math.round(
-                      ((selectedCredit.montant_a_rembourser -
-                        selectedCredit.reste +
-                        repaymentAmount) /
-                        selectedCredit.montant_a_rembourser) *
-                        100
-                    )}
-                    %
+                    Progression : {Math.round(((getTotalRepaidNow(selectedCredit) + repaymentAmount) / ((getTotalRepaidNow(selectedCredit) + repaymentAmount) + Math.max(0, getTotalDueNow(selectedCredit) - repaymentAmount))) * 100)}%
                   </p>
                 </div>
               )}
@@ -944,7 +1285,7 @@ export function Credits() {
                   onClick={handleValidateRepayment}
                   disabled={
                     repaymentAmount <= 0 ||
-                    repaymentAmount > selectedCredit.reste
+                    repaymentAmount > getTotalDueNow(selectedCredit)
                   }
                   className="flex-1 bg-blue-600 hover:bg-blue-700"
                 >
@@ -965,6 +1306,10 @@ export function Credits() {
               <AlertTriangle className="h-5 w-5" />
               Confirmer la suppression
             </DialogTitle>
+            <DialogDescription>
+              Cette action est irréversible. Le crédit sera supprimé
+              définitivement.
+            </DialogDescription>
           </DialogHeader>
           {selectedCredit && (
             <div className="space-y-4">
@@ -972,23 +1317,28 @@ export function Credits() {
 
               <div className="p-3 bg-slate-50 rounded-lg">
                 <p className="text-sm">
-                  <strong>Membre :</strong> {selectedCredit.nom}
+                  <strong>Membre :</strong> {selectedCredit?.nom}
                   <br />
-                  <strong>Montant :</strong>{" "}
-                  {selectedCredit.montant_initial.toLocaleString()} FCFA
+                  <strong>Montant initial :</strong>{" "}
+                  {selectedCredit?.montant_initial.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                   <br />
-                  <strong>Statut :</strong> {selectedCredit.statut}
+                  <strong>Montant total à rembourser :</strong>{" "}
+                  {getTotalDueNow(selectedCredit).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                  <br />
+                  <strong>Statut :</strong> {selectedCredit?.statut}
                 </p>
               </div>
 
-              {selectedCredit.statut === "actif" && (
+              {(selectedCredit?.statut === "actif" ||
+                selectedCredit?.statut === "en_retard") && (
                 <div className="p-4 bg-red-50 rounded-lg border border-red-200">
                   <h4 className="font-semibold text-red-800 mb-2">
                     Attention :
                   </h4>
                   <p className="text-sm text-red-700">
-                    Ce crédit est encore actif. Sa suppression annulera
-                    définitivement le prêt et les remboursements déjà effectués.
+                    Ce crédit est encore actif ou en retard. Sa suppression
+                    annulera définitivement le prêt et les remboursements déjà
+                    effectués.
                   </p>
                 </div>
               )}
@@ -1003,6 +1353,7 @@ export function Credits() {
                 <Button
                   onClick={handleDeleteCredit}
                   className="bg-red-600 hover:bg-red-700"
+                  disabled={role !== "admin"}
                 >
                   Supprimer
                 </Button>

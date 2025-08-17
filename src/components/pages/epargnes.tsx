@@ -50,6 +50,7 @@ import {
 import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { useRole } from "../../hooks/useRole";
 
 interface Transaction {
   id: number;
@@ -72,6 +73,7 @@ interface Member {
 }
 
 export function Epargnes() {
+  const { role } = useRole();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,6 +90,7 @@ export function Epargnes() {
   const [newTransaction, setNewTransaction] = useState({
     membreId: 0,
     montant: 0,
+    montantStr: "",
     motif: "",
   });
 
@@ -123,8 +126,10 @@ export function Epargnes() {
       (transaction.motif?.toLowerCase() || "").includes(
         searchTerm.toLowerCase()
       );
+    // Only show actual savings (epargne type), not contributions or expense savings
     const matchesType = typeFilter === "all" || transaction.type === typeFilter;
-    return matchesSearch && matchesType;
+    const isEpargne = transaction.type === "epargne";
+    return matchesSearch && matchesType && isEpargne;
   });
 
   const handleAddTransaction = async () => {
@@ -160,6 +165,7 @@ export function Epargnes() {
         setNewTransaction({
           membreId: 0,
           montant: 0,
+          montantStr: "",
           motif: "",
         });
         setIsAddDialogOpen(false);
@@ -415,13 +421,15 @@ export function Epargnes() {
                   <Input
                     id="montant"
                     type="number"
-                    value={newTransaction.montant}
-                    onChange={(e) =>
+                    value={newTransaction.montantStr}
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/[^0-9]/g, "");
                       setNewTransaction({
                         ...newTransaction,
-                        montant: Number(e.target.value),
-                      })
-                    }
+                        montantStr: v,
+                        montant: v === "" ? 0 : Number(v),
+                      });
+                    }}
                     placeholder="500000"
                   />
                 </div>
@@ -442,11 +450,7 @@ export function Epargnes() {
                 <Button
                   onClick={handleAddTransaction}
                   className="w-full bg-blue-600 hover:bg-blue-700"
-                  disabled={
-                    !newTransaction.membreId ||
-                    !newTransaction.montant ||
-                    !newTransaction.motif
-                  }
+                  disabled={!newTransaction.membreId || !newTransaction.montant || !newTransaction.motif}
                 >
                   Ajouter l'épargne
                 </Button>
@@ -467,12 +471,7 @@ export function Epargnes() {
           <CardContent>
             <div className="text-2xl font-bold text-green-600">
               {transactions
-                .filter(
-                  (t) =>
-                    t.type === "epargne" ||
-                    t.type === "cotisation_annuelle" ||
-                    t.type === "versement_ponctuel"
-                )
+                .filter((t) => t.type === "epargne")
                 .reduce((sum, t) => sum + t.montant, 0)
                 .toLocaleString()}{" "}
               FCFA
@@ -488,14 +487,7 @@ export function Epargnes() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-blue-600">
-              {
-                transactions.filter(
-                  (t) =>
-                    t.type === "epargne" ||
-                    t.type === "cotisation_annuelle" ||
-                    t.type === "versement_ponctuel"
-                ).length
-              }
+              {transactions.filter((t) => t.type === "epargne").length}
             </div>
           </CardContent>
         </Card>
@@ -510,10 +502,7 @@ export function Epargnes() {
             <div className="text-2xl font-bold text-purple-600">
               {(() => {
                 const epargnes = transactions.filter(
-                  (t) =>
-                    t.type === "epargne" ||
-                    t.type === "cotisation_annuelle" ||
-                    t.type === "versement_ponctuel"
+                  (t) => t.type === "epargne"
                 );
                 return epargnes.length > 0
                   ? Math.round(
@@ -533,15 +522,7 @@ export function Epargnes() {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <CardTitle>
               Historique des Épargnes (
-              {
-                transactions.filter(
-                  (t) =>
-                    t.type === "epargne" ||
-                    t.type === "cotisation_annuelle" ||
-                    t.type === "versement_ponctuel"
-                ).length
-              }
-              )
+              {transactions.filter((t) => t.type === "epargne").length})
             </CardTitle>
             <div className="flex gap-2 items-center">
               <div className="relative">
@@ -560,15 +541,9 @@ export function Epargnes() {
                 <SelectContent>
                   <SelectItem value="all">Tous les types</SelectItem>
                   <SelectItem value="epargne">Épargne</SelectItem>
-                  <SelectItem value="cotisation_annuelle">
-                    Cotisation Annuelle
-                  </SelectItem>
-                  <SelectItem value="versement_ponctuel">
-                    Versement Ponctuel
-                  </SelectItem>
                 </SelectContent>
               </Select>
-              {selectedTransactions.length > 0 && (
+              {selectedTransactions.length > 0 && role === "admin" && (
                 <Button
                   onClick={handleDeleteSelected}
                   variant="destructive"
@@ -660,19 +635,23 @@ export function Epargnes() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={() => openEditDialog(transaction)}
-                          >
-                            <Edit className="mr-2 h-4 w-4" />
-                            Modifier
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => openDeleteDialog(transaction)}
-                            className="text-red-600"
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Supprimer
-                          </DropdownMenuItem>
+                          {role === "admin" && (
+                            <DropdownMenuItem
+                              onClick={() => openEditDialog(transaction)}
+                            >
+                              <Edit className="mr-2 h-4 w-4" />
+                              Modifier
+                            </DropdownMenuItem>
+                          )}
+                          {role === "admin" && (
+                            <DropdownMenuItem
+                              onClick={() => openDeleteDialog(transaction)}
+                              className="text-red-600"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Supprimer
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -732,6 +711,7 @@ export function Epargnes() {
                 <Button
                   onClick={handleEditTransaction}
                   className="bg-blue-600 hover:bg-blue-700"
+                  disabled={role !== "admin"}
                 >
                   Sauvegarder
                 </Button>
@@ -779,6 +759,7 @@ export function Epargnes() {
                 <Button
                   onClick={handleDeleteTransaction}
                   className="bg-red-600 hover:bg-red-700"
+                  disabled={role !== "admin"}
                 >
                   Supprimer
                 </Button>

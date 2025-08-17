@@ -40,9 +40,11 @@ import {
   AlertTriangle,
   Loader2,
   History,
+  FileDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useRole } from "../../hooks/useRole";
 
 interface Member {
   id: number;
@@ -55,6 +57,11 @@ interface Member {
   soldeEpargne?: number;
   totalCotisations?: number;
   creditActuel?: number;
+  cassationTotal?: number;
+  ancienSoldePersonnel?: number;
+  nouveauSoldePersonnel?: number;
+  soldePersonnel?: number;
+  epargneActuelle?: number; // Pour la nouvelle logique de cassation
 }
 
 interface Mouvement {
@@ -67,6 +74,7 @@ interface Mouvement {
 }
 
 export function Members() {
+  const { role } = useRole();
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -86,8 +94,16 @@ export function Members() {
     telephone: "",
     ville: "",
     profession: "",
+    caution: 30000,
+    cautionStr: "",
   });
   const [isMultiDeleteDialogOpen, setIsMultiDeleteDialogOpen] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [restitutionInfo, setRestitutionInfo] = useState<{
+    caution: number;
+    solde: number;
+    total: number;
+  } | null>(null);
 
   // Charger les membres depuis la base de données
   const loadMembers = async () => {
@@ -109,6 +125,24 @@ export function Members() {
     loadMembers();
   }, []);
 
+  // Écouter les événements de suppression de crédit pour recharger les données
+  useEffect(() => {
+    if (window.electronAPI) {
+      const handleCreditDeleted = (creditId: number) => {
+        console.log(`Crédit ${creditId} supprimé, rechargement des membres...`);
+        loadMembers();
+      };
+
+      window.electronAPI.onCreditDeleted(handleCreditDeleted);
+
+      // Cleanup function
+      return () => {
+        // Note: Dans une vraie application, on devrait avoir une méthode pour retirer les listeners
+        // Mais pour l'instant, on laisse le listener actif
+      };
+    }
+  }, []);
+
   const filteredMembers = members.filter(
     (member) =>
       member.nom.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -126,7 +160,7 @@ export function Members() {
       const memberData = {
         ...newMember,
         dateAdhesion: new Date().toISOString().split("T")[0],
-        caution: 30000,
+        caution: newMember.caution,
       };
 
       const result = await window.electronAPI.ajouterMembre(memberData);
@@ -138,6 +172,8 @@ export function Members() {
           telephone: "",
           ville: "",
           profession: "",
+          caution: 30000,
+          cautionStr: "",
         });
         setIsAddDialogOpen(false);
         loadMembers(); // Recharger les données
@@ -197,13 +233,46 @@ export function Members() {
     }
   };
 
+  const handleExportMemberPdf = async (memberId: number, memberName: string) => {
+    setExportingPdf(true);
+    try {
+      const result = await window.electronAPI.exportMembrePdf(memberId);
+      
+      if (result.success) {
+        toast.success(`PDF de ${memberName} généré et ouvert automatiquement`);
+      } else {
+        toast.error(`Erreur lors de l'export PDF: ${result.message}`);
+      }
+    } catch (error) {
+      toast.error("Erreur lors de l'export PDF");
+      console.error("Export PDF error:", error);
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
   const openEditDialog = (member: Member) => {
     setSelectedMember({ ...member });
     setIsEditDialogOpen(true);
   };
 
-  const openDeleteDialog = (member: Member) => {
+  const openDeleteDialog = async (member: Member) => {
     setSelectedMember(member);
+    // Calculer le montant à restituer (caution + solde personnel)
+    if (window.electronAPI) {
+      const details = await window.electronAPI.getDetailsMembre(member.id);
+      const caution = member.caution || 0;
+      const solde =
+        (details.soldeEpargne || 0) -
+        (details.creditActuel || 0) -
+        (details.totalCotisations || 0) -
+        (details.totalDepenses || 0);
+      setRestitutionInfo({
+        caution,
+        solde,
+        total: caution + (solde > 0 ? solde : 0),
+      });
+    }
     setIsDeleteDialogOpen(true);
   };
 
@@ -233,6 +302,8 @@ export function Members() {
     try {
       if (window.electronAPI) {
         const details = await window.electronAPI.getDetailsMembre(member.id);
+        console.log("📊 Détails du membre récupérés:", details);
+        console.log("💰 Crédits du membre:", details.creditsDetails);
         setMemberDetails(details);
       }
     } catch (error) {
@@ -270,17 +341,38 @@ export function Members() {
       }
 
       // Supprimer les membres sélectionnés
+      let successCount = 0;
+      let errorCount = 0;
+
       for (const memberId of selectedMembers) {
-        const result = await window.electronAPI.supprimerMembre(memberId);
-        if (!result.success) {
-          toast.error(`Erreur lors de la suppression du membre ${memberId}`);
-          return;
+        try {
+          const result = await window.electronAPI.supprimerMembre(memberId);
+          if (result.success) {
+            successCount++;
+          } else {
+            errorCount++;
+            console.error(
+              `Erreur suppression membre ${memberId}:`,
+              result.message
+            );
+          }
+        } catch (error) {
+          errorCount++;
+          console.error(
+            `Erreur lors de la suppression du membre ${memberId}:`,
+            error
+          );
         }
       }
 
-      toast.success(
-        `${selectedMembers.length} membre(s) supprimé(s) avec succès`
-      );
+      if (successCount > 0) {
+        toast.success(`${successCount} membre(s) supprimé(s) avec succès`);
+      }
+
+      if (errorCount > 0) {
+        toast.error(`${errorCount} membre(s) n'ont pas pu être supprimés`);
+      }
+
       setSelectedMembers([]);
       loadMembers();
     } catch (error) {
@@ -373,12 +465,29 @@ export function Members() {
                     placeholder="Profession"
                   />
                 </div>
+                <div>
+                  <Label htmlFor="caution">Caution (FCFA)</Label>
+                  <Input
+                    id="caution"
+                    type="number"
+                    min={0}
+                    step={1000}
+                    value={newMember.cautionStr}
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/[^0-9]/g, "");
+                      setNewMember({
+                        ...newMember,
+                        cautionStr: v,
+                        caution: Math.max(0, Number(v || 0)),
+                      });
+                    }}
+                    placeholder="30000"
+                  />
+                </div>
                 <div className="p-3 bg-blue-50 rounded-lg">
                   <p className="text-sm text-blue-800">
                     <strong>Date d'adhésion :</strong>{" "}
                     {new Date().toLocaleDateString("fr-FR")}
-                    <br />
-                    <strong>Caution :</strong> 30,000 FCFA (fixe)
                   </p>
                 </div>
                 <Button
@@ -419,7 +528,7 @@ export function Members() {
             <div className="text-2xl font-bold text-green-600">
               {members
                 .reduce((sum, m) => sum + (m.caution || 0), 0)
-                .toLocaleString()}{" "}
+                .toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}{" "}
               FCFA
             </div>
           </CardContent>
@@ -437,7 +546,7 @@ export function Members() {
                 ? Math.round(
                     members.reduce((sum, m) => sum + (m.caution || 0), 0) /
                       members.length
-                  ).toLocaleString()
+                  ).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })
                 : 0}{" "}
               FCFA
             </div>
@@ -460,7 +569,7 @@ export function Members() {
                   className="pl-10 w-64"
                 />
               </div>
-              {selectedMembers.length > 0 && (
+              {selectedMembers.length > 0 && role === "admin" && (
                 <>
                   <Button
                     onClick={() => setIsMultiDeleteDialogOpen(true)}
@@ -530,6 +639,7 @@ export function Members() {
                               await handleDeleteSelected();
                             }}
                             className="bg-red-600 hover:bg-red-700"
+                            disabled={role !== "admin"}
                           >
                             Supprimer définitivement
                           </Button>
@@ -551,6 +661,14 @@ export function Members() {
                 Aucun membre ne correspond à votre recherche "{searchTerm}"
               </p>
             </div>
+          ) : filteredMembers.length === 0 ? (
+            <div className="text-center py-8 text-slate-500">
+              <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p className="text-lg font-medium">Aucun membre enregistré</p>
+              <p className="text-sm">
+                Commencez par ajouter votre premier membre.
+              </p>
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -569,7 +687,7 @@ export function Members() {
                   <TableHead>Ville</TableHead>
                   <TableHead>Profession</TableHead>
                   <TableHead>Date d'adhésion</TableHead>
-                  <TableHead>Solde Épargne</TableHead>
+                  <TableHead>Solde Personnel</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -594,7 +712,7 @@ export function Members() {
                       )}
                     </TableCell>
                     <TableCell className="font-medium text-green-600">
-                      {(member.soldeEpargne || 0).toLocaleString()} FCFA
+                      {(member.soldePersonnel || member.soldeEpargne || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                     </TableCell>
                     <TableCell>
                       <DropdownMenu>
@@ -629,18 +747,33 @@ export function Members() {
                             Historique
                           </DropdownMenuItem>
                           <DropdownMenuItem
-                            onClick={() => openEditDialog(member)}
+                            onClick={() => handleExportMemberPdf(member.id, member.nom)}
+                            disabled={exportingPdf}
                           >
-                            <Edit className="mr-2 h-4 w-4" />
-                            Modifier
+                            {exportingPdf ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <FileDown className="mr-2 h-4 w-4" />
+                            )}
+                            {exportingPdf ? "Export..." : "Exporter PDF"}
                           </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => openDeleteDialog(member)}
-                            className="text-red-600"
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Supprimer
-                          </DropdownMenuItem>
+                          {role === "admin" && (
+                            <DropdownMenuItem
+                              onClick={() => openEditDialog(member)}
+                            >
+                              <Edit className="mr-2 h-4 w-4" />
+                              Modifier
+                            </DropdownMenuItem>
+                          )}
+                          {role === "admin" && (
+                            <DropdownMenuItem
+                              onClick={() => openDeleteDialog(member)}
+                              className="text-red-600"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Supprimer
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -715,6 +848,22 @@ export function Members() {
                   }
                 />
               </div>
+              <div>
+                <Label htmlFor="edit-caution">Caution (FCFA)</Label>
+                <Input
+                  id="edit-caution"
+                  type="number"
+                  min={0}
+                  step={1000}
+                  value={selectedMember.caution}
+                  onChange={(e) =>
+                    setSelectedMember({
+                      ...selectedMember,
+                      caution: Math.max(0, Number(e.target.value || 0)),
+                    })
+                  }
+                />
+              </div>
               <DialogFooter>
                 <Button
                   variant="outline"
@@ -725,6 +874,7 @@ export function Members() {
                 <Button
                   onClick={handleEditMember}
                   className="bg-blue-600 hover:bg-blue-700"
+                  disabled={role !== "admin"}
                 >
                   Sauvegarder
                 </Button>
@@ -745,6 +895,18 @@ export function Members() {
             <DialogDescription>
               Cette action est irréversible. Toutes les données du membre seront
               supprimées définitivement.
+              <br />
+              {restitutionInfo && (
+                <div className="mt-2 p-2 bg-blue-50 rounded text-blue-800">
+                  <strong>Montant total restitué :</strong>{" "}
+                  {restitutionInfo.total.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                  <br />
+                  <span className="text-xs">
+                    (Caution : {restitutionInfo.caution.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA,
+                    Solde : {restitutionInfo.solde.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA)
+                  </span>
+                </div>
+              )}
             </DialogDescription>
           </DialogHeader>
           {selectedMember && (
@@ -785,6 +947,7 @@ export function Members() {
                 <Button
                   onClick={handleDeleteMember}
                   className="bg-red-600 hover:bg-red-700"
+                  disabled={role !== "admin"}
                 >
                   Supprimer définitivement
                 </Button>
@@ -829,9 +992,9 @@ export function Members() {
                   <p className="text-sm text-slate-600">Total Épargne</p>
                   <p className="text-lg font-bold text-green-600">
                     {memberHistory
-                      .filter((m) => m.type === "épargne")
+                      .filter((m) => m.type === "epargne")
                       .reduce((sum, m) => sum + m.montant, 0)
-                      .toLocaleString()}{" "}
+                      .toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}{" "}
                     FCFA
                   </p>
                 </div>
@@ -839,9 +1002,13 @@ export function Members() {
                   <p className="text-sm text-slate-600">Total Cotisations</p>
                   <p className="text-lg font-bold text-blue-600">
                     {memberHistory
-                      .filter((m) => m.type === "cotisation")
+                      .filter(
+                        (m) =>
+                          m.type === "cotisation_annuelle" ||
+                          m.type === "versement_ponctuel"
+                      )
                       .reduce((sum, m) => sum + m.montant, 0)
-                      .toLocaleString()}{" "}
+                      .toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}{" "}
                     FCFA
                   </p>
                 </div>
@@ -849,9 +1016,9 @@ export function Members() {
                   <p className="text-sm text-slate-600">Total Dépenses</p>
                   <p className="text-lg font-bold text-red-600">
                     {memberHistory
-                      .filter((m) => m.type === "depense")
+                      .filter((m) => m.type === "depense_commune_epargne")
                       .reduce((sum, m) => sum + Math.abs(m.montant), 0)
-                      .toLocaleString()}{" "}
+                      .toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}{" "}
                     FCFA
                   </p>
                 </div>
@@ -859,9 +1026,9 @@ export function Members() {
                   <p className="text-sm text-slate-600">Total Crédits</p>
                   <p className="text-lg font-bold text-orange-600">
                     {memberHistory
-                      .filter((m) => m.type === "crédit")
-                      .reduce((sum, m) => sum + m.montant, 0)
-                      .toLocaleString()}{" "}
+                      .filter((m) => m.type === "credit")
+                      .reduce((sum, m) => sum + Math.abs(m.montant), 0)
+                      .toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}{" "}
                     FCFA
                   </p>
                 </div>
@@ -921,7 +1088,7 @@ export function Members() {
                             : mouvement.type === "depense_commune_epargne"
                             ? "Dépense Épargne"
                             : mouvement.type === "credit"
-                            ? "Crédit"
+                            ? "Crédit Accordé"
                             : mouvement.type === "remboursement"
                             ? "Remboursement"
                             : mouvement.type === "interet"
@@ -930,6 +1097,8 @@ export function Members() {
                             ? "Dépôt Caution"
                             : mouvement.type === "restitution_caution"
                             ? "Restitution Caution"
+                            : mouvement.type === "cassation"
+                            ? "Cassation"
                             : mouvement.type}
                         </span>
                       </TableCell>
@@ -953,7 +1122,7 @@ export function Members() {
                         mouvement.type === "restitution_caution"
                           ? "+"
                           : "-"}
-                        {Math.abs(mouvement.montant).toLocaleString()} FCFA
+                        {Math.abs(mouvement.montant).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                       </TableCell>
                       <TableCell className="text-sm text-slate-600">
                         {mouvement.motif}
@@ -969,7 +1138,7 @@ export function Members() {
 
       {/* Dialog de détails */}
       <Dialog open={isDetailsDialogOpen} onOpenChange={setIsDetailsDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-[95vw] max-h-[95vh] overflow-y-auto mx-auto my-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <svg
@@ -1043,7 +1212,7 @@ export function Members() {
                     <div className="flex justify-between">
                       <span className="text-slate-600">Caution :</span>
                       <span className="font-medium text-blue-600">
-                        {memberDetails.membre.caution.toLocaleString()} FCFA
+                        {memberDetails.membre.caution.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                       </span>
                     </div>
                   </div>
@@ -1055,70 +1224,127 @@ export function Members() {
                   </h4>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
-                      <span className="text-slate-600">Solde Épargne :</span>
+                      <span className="text-slate-600">
+                        {(memberDetails.cassationTotal || 0) > 0
+                          ? "Nouveau solde personnel :"
+                          : "Solde personnel actuel :"}
+                      </span>
                       <span className="font-medium text-green-600">
-                        {memberDetails.soldeEpargne.toLocaleString()} FCFA
+                        {typeof memberDetails.cassationTotal === "number" && memberDetails.cassationTotal > 0
+                          ? Math.max(0, (memberDetails.ancienSoldePersonnel || 0) + (memberDetails.cassationTotal || 0)).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })
+                          : memberDetails.soldeEpargne?.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 }) || 0} FCFA
                       </span>
                     </div>
+                    {typeof memberDetails.cassationTotal === "number" && memberDetails.cassationTotal > 0 && (
+                      <div className="flex justify-between">
+                                                    <span className="text-slate-600">
+                              Part d'intérêts reçue :
+                            </span>
+                        <span className="font-medium text-emerald-600">
+                          {memberDetails.cassationTotal.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between">
                       <span className="text-slate-600">
-                        Total Cotisations :
+                        Crédits à rembourser :
                       </span>
-                      <span className="font-medium text-blue-600">
-                        {memberDetails.totalCotisations.toLocaleString()} FCFA
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-600">Total Dépenses :</span>
                       <span className="font-medium text-red-600">
-                        {memberDetails.totalDepenses.toLocaleString()} FCFA
+                        {memberDetails.creditActuel?.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 }) || 0} FCFA
                       </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-600">Crédit Actuel :</span>
-                      <span className="font-medium text-orange-600">
-                        {memberDetails.creditActuel.toLocaleString()} FCFA
-                      </span>
-                    </div>
+                    {memberDetails.totalPenalites > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">
+                          Dont pénalités :
+                        </span>
+                        <span className="font-medium text-orange-600">
+                          {memberDetails.totalPenalites?.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 }) || 0} FCFA
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between">
                       <span className="text-slate-600">
                         Nombre de Mouvements :
                       </span>
                       <span className="font-medium text-slate-900">
-                        {memberDetails.nbMouvements}
+                        {memberDetails.nbMouvements || 0}
                       </span>
                     </div>
+                    {typeof memberDetails.cassationTotal === "number" && memberDetails.cassationTotal > 0 && (
+                      <div className="mt-2 p-2 bg-blue-50 rounded border border-blue-200">
+                        <div className="text-xs text-blue-700">
+                          ℹ️ Épargnes en fonds commun remises à 0 après cassation
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
 
-              {/* Solde personnel */}
+              {/* Solde personnel selon la nouvelle logique */}
               <div className="p-4 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg border border-purple-200">
                 <h4 className="font-semibold text-slate-900 mb-2">
-                  Solde Personnel
+                  Solde Personnel (Nouvelle Logique de Cassation)
                 </h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <h5 className="text-sm font-medium text-slate-700 mb-2">
-                      Entrées Personnelles
+                      Composition du Solde Personnel
                     </h5>
                     <div className="space-y-1 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-slate-600">Dépôts épargne :</span>
-                        <span className="font-medium text-green-600">
-                          {memberDetails.soldeEpargne.toLocaleString()} FCFA
-                        </span>
-                      </div>
-                      <div className="pt-1 border-t border-slate-200">
-                        <div className="flex justify-between font-medium">
-                          <span className="text-slate-700">
-                            Total Entrées :
-                          </span>
-                          <span className="text-green-600">
-                            {memberDetails.soldeEpargne.toLocaleString()} FCFA
-                          </span>
-                        </div>
-                      </div>
+                      {typeof memberDetails.cassationTotal === "number" && memberDetails.cassationTotal > 0 ? (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-slate-600">
+                              Ancien solde personnel :
+                            </span>
+                            <span className="font-medium text-blue-600">
+                              {(memberDetails.ancienSoldePersonnel || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}{" "}
+                              FCFA
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-600">
+                              Part d'intérêts reçue :
+                            </span>
+                            <span className="font-medium text-emerald-600">
+                              +{memberDetails.cassationTotal.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA (part d'intérêts)
+                            </span>
+                          </div>
+                          <div className="pt-1 border-t border-slate-200">
+                            <div className="flex justify-between font-medium">
+                              <span className="text-slate-700">
+                                Nouveau solde personnel :
+                              </span>
+                              <span className="text-green-600">
+                                {Math.max(0, (memberDetails.ancienSoldePersonnel || 0) + (memberDetails.cassationTotal || 0)).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}{" "}
+                                FCFA
+                              </span>
+                            </div>
+                          </div>
+                          <div className="mt-2 p-2 bg-orange-50 rounded border border-orange-200">
+                            <div className="flex justify-between text-xs">
+                              <span className="text-orange-700">Épargnes en fonds :</span>
+                              <span className="font-medium text-orange-700">0 FCFA (remise à zéro)</span>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-slate-600">
+                              Solde personnel actuel :
+                            </span>
+                            <span className="font-medium text-green-600">
+                              {memberDetails.soldeEpargne?.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-500 mt-1">
+                            (Aucune cassation effectuée)
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                   <div>
@@ -1128,40 +1354,29 @@ export function Members() {
                     <div className="space-y-1 text-sm">
                       <div className="flex justify-between">
                         <span className="text-slate-600">
-                          Crédits accordés :
-                        </span>
-                        <span className="font-medium text-orange-600">
-                          {memberDetails.creditActuel.toLocaleString()} FCFA
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-600">
-                          Cotisations et versements :
-                        </span>
-                        <span className="font-medium text-blue-600">
-                          {memberDetails.totalCotisations.toLocaleString()} FCFA
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-600">
-                          Dépenses communes :
+                          Crédits à rembourser :
                         </span>
                         <span className="font-medium text-red-600">
-                          {memberDetails.totalDepenses.toLocaleString()} FCFA
+                          {memberDetails.creditActuel?.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                         </span>
                       </div>
+                      {memberDetails.totalPenalites > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-600">
+                            Dont pénalités :
+                          </span>
+                          <span className="font-medium text-orange-600">
+                            {memberDetails.totalPenalites?.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 }) || 0} FCFA
+                          </span>
+                        </div>
+                      )}
                       <div className="pt-1 border-t border-slate-200">
                         <div className="flex justify-between font-medium">
                           <span className="text-slate-700">
                             Total Sorties :
                           </span>
                           <span className="text-red-600">
-                            {(
-                              memberDetails.creditActuel +
-                              memberDetails.totalCotisations +
-                              memberDetails.totalDepenses
-                            ).toLocaleString()}{" "}
-                            FCFA
+                            {(memberDetails.creditActuel || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                           </span>
                         </div>
                       </div>
@@ -1171,72 +1386,174 @@ export function Members() {
                 <div className="mt-4 p-3 bg-white rounded-lg border border-slate-200">
                   <div className="flex justify-between items-center">
                     <span className="text-lg font-semibold text-slate-900">
-                      Solde Personnel
+                      Solde Net Final
                     </span>
                     <span
                       className={`text-2xl font-bold ${
-                        memberDetails.soldeEpargne -
-                          memberDetails.creditActuel -
-                          memberDetails.totalCotisations -
-                          memberDetails.totalDepenses >=
+                        (typeof memberDetails.cassationTotal === "number" && memberDetails.cassationTotal > 0
+                          ? Math.max(0, (memberDetails.ancienSoldePersonnel || 0) + (memberDetails.cassationTotal || 0))
+                          : (memberDetails.soldeEpargne || 0)) -
+                          (memberDetails.creditActuel || 0) >=
                         0
                           ? "text-green-600"
                           : "text-red-600"
                       }`}
                     >
                       {(
-                        memberDetails.soldeEpargne -
-                        memberDetails.creditActuel -
-                        memberDetails.totalCotisations -
-                        memberDetails.totalDepenses
-                      ).toLocaleString()}{" "}
+                        (typeof memberDetails.cassationTotal === "number" && memberDetails.cassationTotal > 0
+                          ? Math.max(0, (memberDetails.ancienSoldePersonnel || 0) + (memberDetails.cassationTotal || 0))
+                          : (memberDetails.soldeEpargne || 0)) -
+                        (memberDetails.creditActuel || 0)
+                      ).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}{" "}
                       FCFA
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
-                    Calculé selon : Épargne - Crédits - Cotisations - Dépenses
+                    {typeof memberDetails.cassationTotal === "number" && memberDetails.cassationTotal > 0
+                      ? "Calculé selon : Nouveau solde personnel - Crédits à rembourser"
+                      : "Calculé selon : Solde personnel - Crédits à rembourser"}
                   </p>
+                  {typeof memberDetails.cassationTotal === "number" && memberDetails.cassationTotal > 0 && (
+                    <div className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                      <p className="text-xs text-green-700">
+                        💡 <strong>Après cassation :</strong> Le membre a un nouveau solde personnel qui inclut sa part d'intérêts reçue. 
+                        Les crédits restent inchangés et doivent toujours être remboursés.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Résumé financier */}
+              {/* Détails des crédits */}
+              {memberDetails.creditsDetails && memberDetails.creditsDetails.length > 0 && (
+                <div className="p-4 bg-gradient-to-r from-red-50 to-orange-50 rounded-lg border border-red-200">
+                  <h4 className="font-semibold text-slate-900 mb-2">
+                    Détails des Crédits ({memberDetails.creditsDetails.length} crédit(s))
+                  </h4>
+                  <div className="mb-3 p-2 bg-blue-50 rounded text-xs text-blue-800">
+                    💡 Données récupérées directement depuis la base de données (table credits)
+                  </div>
+                  <div className="space-y-3">
+                    {memberDetails.creditsDetails.map((credit: any, index: number) => (
+                      <div key={credit.id} className="p-3 bg-white rounded-lg border border-red-100">
+                        <div className="flex justify-between items-start mb-2">
+                          <div className="text-sm font-medium text-slate-700">
+                            Crédit #{credit.id}
+                          </div>
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                            credit.statut === 'actif' 
+                              ? 'bg-green-100 text-green-800' 
+                              : 'bg-red-100 text-red-800'
+                          }`}>
+                            {credit.statut === 'actif' ? 'Actif' : 'En retard'}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-600">Montant initial :</span>
+                              <span className="font-medium">{credit.montant_initial?.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-600">Reste à rembourser :</span>
+                              <span className="font-medium text-red-600">{credit.reste?.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA</span>
+                            </div>
+                            {credit.penalite_due > 0 && (
+                              <div className="flex justify-between">
+                                <span className="text-slate-600">Pénalités :</span>
+                                <span className="font-medium text-orange-600">{credit.penalite_due?.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA</span>
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-600">Date d'accord :</span>
+                              <span className="font-medium">{new Date(credit.date_accord).toLocaleDateString('fr-FR')}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-600">Échéance :</span>
+                              <span className="font-medium">{new Date(credit.date_heure_echeance).toLocaleDateString('fr-FR')}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Résumé financier selon la nouvelle logique */}
               <div className="p-4 bg-gradient-to-r from-blue-50 to-green-50 rounded-lg border border-blue-200">
                 <h4 className="font-semibold text-slate-900 mb-2">
-                  Résumé Financier
+                  Résumé Financier Final
                 </h4>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="text-center">
-                    <p className="text-sm text-slate-600">Solde Net</p>
-                    <p className="text-lg font-bold text-green-600">
+                    <p className="text-sm text-slate-600">Solde Net Final</p>
+                    <p className={`text-lg font-bold ${
+                      (typeof memberDetails.cassationTotal === "number" && memberDetails.cassationTotal > 0
+                        ? Math.max(0, (memberDetails.ancienSoldePersonnel || 0) + (memberDetails.cassationTotal || 0))
+                        : (memberDetails.soldeEpargne || 0)) - (memberDetails.creditActuel || 0) >= 0
+                        ? "text-green-600"
+                        : "text-red-600"
+                    }`}>
                       {(
-                        memberDetails.soldeEpargne +
-                        memberDetails.totalCotisations -
-                        memberDetails.creditActuel -
-                        memberDetails.totalDepenses
-                      ).toLocaleString()}{" "}
+                        (typeof memberDetails.cassationTotal === "number" && memberDetails.cassationTotal > 0
+                          ? Math.max(0, (memberDetails.ancienSoldePersonnel || 0) + (memberDetails.cassationTotal || 0))
+                          : (memberDetails.soldeEpargne || 0)) -
+                        (memberDetails.creditActuel || 0)
+                      ).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}{" "}
                       FCFA
                     </p>
                   </div>
                   <div className="text-center">
-                    <p className="text-sm text-slate-600">Total Entrées</p>
+                    <p className="text-sm text-slate-600">
+                      {(memberDetails.cassationTotal || 0) > 0
+                        ? "Nouveau Solde Personnel"
+                        : "Solde Personnel"}
+                    </p>
                     <p className="text-lg font-bold text-blue-600">
-                      {(
-                        memberDetails.soldeEpargne +
-                        memberDetails.totalCotisations
-                      ).toLocaleString()}{" "}
-                      FCFA
+                      {typeof memberDetails.cassationTotal === "number" && memberDetails.cassationTotal > 0
+                        ? Math.max(0, (memberDetails.ancienSoldePersonnel || 0) + (memberDetails.cassationTotal || 0)).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })
+                        : (memberDetails.soldeEpargne || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                     </p>
+                    {typeof memberDetails.cassationTotal === "number" && memberDetails.cassationTotal > 0 && (
+                      <p className="text-xs text-emerald-600 mt-1">
+                        (Inclut +{memberDetails.cassationTotal.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA d'intérêts)
+                      </p>
+                    )}
                   </div>
                   <div className="text-center">
-                    <p className="text-sm text-slate-600">Total Sorties</p>
-                    <p className="text-lg font-bold text-red-600">
-                      {(
-                        memberDetails.creditActuel + memberDetails.totalDepenses
-                      ).toLocaleString()}{" "}
-                      FCFA
+                    <p className="text-sm text-slate-600">
+                      Crédits à Rembourser
                     </p>
+                    <p className="text-lg font-bold text-red-600">
+                      {(memberDetails.creditActuel || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                    </p>
+                    {typeof memberDetails.cassationTotal === "number" && memberDetails.cassationTotal > 0 && (
+                      <p className="text-xs text-red-600 mt-1">
+                        (Inchangés après cassation)
+                      </p>
+                    )}
                   </div>
                 </div>
+                {typeof memberDetails.cassationTotal === "number" && memberDetails.cassationTotal > 0 && (
+                  <div className="mt-4 p-3 bg-white rounded-lg border border-slate-200">
+                    <h5 className="text-sm font-semibold text-slate-900 mb-2">
+                      💡 Nouvelle Logique de Cassation Appliquée
+                    </h5>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-slate-600">
+                      <div>
+                        <p>✅ <strong>Solde personnel augmenté</strong> de la part d'intérêts</p>
+                        <p>⚠️ <strong>Épargnes en fonds commun</strong> remises à 0</p>
+                      </div>
+                      <div>
+                        <p>🔒 <strong>Crédits inchangés</strong> (dettes persistantes)</p>
+                        <p>🎯 <strong>Nouveau cycle</strong> prêt à démarrer</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ) : (

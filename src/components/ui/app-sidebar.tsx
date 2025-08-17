@@ -11,6 +11,9 @@ import {
   Receipt,
   LogOut,
   User,
+  Gift,
+  Calendar,
+  Settings,
 } from "lucide-react";
 import {
   Sidebar,
@@ -22,7 +25,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarRail,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -49,11 +51,6 @@ const menuItems = [
     icon: HistoryIcon,
   },
   {
-    id: "historique",
-    title: "Historique",
-    icon: Calculator,
-  },
-  {
     id: "common-expenses",
     title: "Dépenses Communes",
     icon: Receipt,
@@ -64,9 +61,24 @@ const menuItems = [
     icon: Banknote,
   },
   {
-    id: "caisse",
-    title: "Caisse",
-    icon: Wallet,
+    id: "cassation",
+    title: "Cassation",
+    icon: Calculator,
+  },
+  {
+    id: "sessions",
+    title: "Sessions",
+    icon: Calendar,
+  },
+  {
+    id: "dons",
+    title: "Dons",
+    icon: Gift,
+  },
+  {
+    id: "settings",
+    title: "Paramètres",
+    icon: Settings,
   },
 ];
 
@@ -93,17 +105,21 @@ export function AppSidebar({
   };
 
   return (
-    <Sidebar className="border-r border-blue-100">
-      <SidebarHeader className="border-b border-blue-100 p-6">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-blue-600 to-blue-700 text-white">
-            <Wallet className="h-5 w-5" />
+    <Sidebar className="border-r border-blue-100" collapsible="none" style={{ ["--sidebar-width"]: "11rem" } as React.CSSProperties}>
+      <SidebarHeader className="border-b border-blue-100 p-4">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-blue-600 to-blue-700 text-white overflow-hidden">
+            <img 
+              src="./assets/meeting.png" 
+              alt="Famille Tiwa Joseph" 
+              className="h-6 w-6 object-cover rounded-sm"
+            />
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-slate-900">
-              Family Fund
+            <h1 className="text-[0.95rem] font-semibold text-slate-900 font-brand leading-tight">
+              Famille Tiwa Joseph
             </h1>
-            <p className="text-sm text-slate-500">Management System</p>
+            <p className="text-[0.7rem] text-slate-500">Management System</p>
           </div>
         </div>
       </SidebarHeader>
@@ -156,7 +172,6 @@ export function AppSidebar({
           </Button>
         </div>
       </SidebarFooter>
-      <SidebarRail />
     </Sidebar>
   );
 }

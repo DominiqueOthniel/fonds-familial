@@ -44,11 +44,14 @@ import {
   AlertTriangle,
   Loader2,
   Download,
+  CheckCircle,
+  FileDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { useRole } from "../../hooks/useRole";
 
 interface Transaction {
   id: number;
@@ -58,6 +61,8 @@ interface Transaction {
   montant: number;
   motif: string;
   date: string;
+  updatedAt?: string;
+  sessionId?: number;
 }
 
 interface Member {
@@ -71,12 +76,16 @@ interface Member {
 }
 
 export function Mouvements() {
+  const { role } = useRole();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [memberFilter, setMemberFilter] = useState("all");
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [sessionFilter, setSessionFilter] = useState<string>("all");
+  const [exportingPdf, setExportingPdf] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedTransaction, setSelectedTransaction] =
@@ -90,12 +99,17 @@ export function Mouvements() {
     try {
       setLoading(true);
       if (window.electronAPI) {
-        const [transactionsData, membersData] = await Promise.all([
-          window.electronAPI.getMouvements(),
+        const filters = sessionFilter !== "all" ? { sessionId: Number(sessionFilter) } : {};
+        const [transactionsData, membersData, sessionsData] = await Promise.all([
+          window.electronAPI.getMouvements(filters),
           window.electronAPI.getMembres(),
+          window.electronAPI.getSessions(),
         ]);
+        console.log("🔍 Debug sessions:", sessionsData);
+        console.log("🔍 Debug transactions sample:", transactionsData.slice(0, 3));
         setTransactions(transactionsData);
         setMembers(membersData);
+        setSessions(sessionsData.sessions || []);
       }
     } catch (error) {
       console.error("Erreur lors du chargement des données:", error);
@@ -107,6 +121,56 @@ export function Mouvements() {
 
   useEffect(() => {
     loadData();
+  }, [sessionFilter]);
+
+  // Écouter les événements de suppression de crédit et mise à jour du fonds pour recharger les données
+  useEffect(() => {
+    if (window.electronAPI) {
+      const handleCreditDeleted = (creditId: number) => {
+        console.log(
+          `Crédit ${creditId} supprimé, rechargement des mouvements...`
+        );
+        loadData();
+      };
+
+      const handleFondsUpdated = (data: { montant: number; type: string }) => {
+        console.log(`Fonds mis à jour: ${data.type} - ${data.montant} FCFA`);
+        loadData();
+      };
+
+      const handleMouvementsUpdated = (data: {
+        type: string;
+        depenseId: number;
+        depenseType: string;
+      }) => {
+        console.log(
+          `Mouvements mis à jour: ${data.type} - Dépense ${data.depenseId} (${data.depenseType})`
+        );
+        loadData();
+      };
+
+      window.electronAPI.onCreditDeleted(handleCreditDeleted);
+      window.electronAPI.onFondsUpdated(handleFondsUpdated);
+      window.electronAPI.onMouvementsUpdated(handleMouvementsUpdated);
+
+      // Cleanup function
+      return () => {
+        // Retirer les listeners pour éviter les memory leaks
+        if (window.electronAPI) {
+          if (window.electronAPI.removeCreditDeletedListener) {
+            window.electronAPI.removeCreditDeletedListener(handleCreditDeleted);
+          }
+          if (window.electronAPI.removeFondsUpdatedListener) {
+            window.electronAPI.removeFondsUpdatedListener(handleFondsUpdated);
+          }
+          if (window.electronAPI.removeMouvementsUpdatedListener) {
+            window.electronAPI.removeMouvementsUpdatedListener(
+              handleMouvementsUpdated
+            );
+          }
+        }
+      };
+    }
   }, []);
 
   const filteredTransactions = transactions.filter((transaction) => {
@@ -187,6 +251,25 @@ export function Mouvements() {
     setIsDeleteDialogOpen(true);
   };
 
+  const handleExportPdf = async () => {
+    setExportingPdf(true);
+    try {
+      const sessionId = sessionFilter === "all" ? undefined : parseInt(sessionFilter);
+      const result = await window.electronAPI.exportMouvementsPdf(sessionId);
+      
+      if (result.success) {
+        toast.success(result.message);
+      } else {
+        toast.error(`Erreur lors de l'export PDF: ${result.message}`);
+      }
+    } catch (error) {
+      toast.error("Erreur lors de l'export PDF");
+      console.error("Export PDF error:", error);
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
   // Gestion des cases à cocher
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -245,24 +328,16 @@ export function Mouvements() {
     switch (type) {
       case "epargne":
         return "bg-emerald-100 text-emerald-800 border-emerald-200";
-      case "cotisation_annuelle":
-        return "bg-green-100 text-green-800 border-green-200";
-      case "versement_ponctuel":
-        return "bg-blue-100 text-blue-800 border-blue-200";
-      case "depot_caution":
-        return "bg-yellow-100 text-yellow-800 border-yellow-200";
-      case "restitution_caution":
-        return "bg-orange-100 text-orange-800 border-orange-200";
       case "credit":
         return "bg-red-100 text-red-800 border-red-200";
       case "remboursement":
         return "bg-purple-100 text-purple-800 border-purple-200";
-      case "interet":
-        return "bg-pink-100 text-pink-800 border-pink-200";
-      case "depense_commune_fonds":
-        return "bg-indigo-100 text-indigo-800 border-indigo-200";
-      case "depense_commune_epargne":
-        return "bg-gray-100 text-gray-800 border-gray-200";
+      case "depense_epargne":
+        return "bg-red-100 text-red-800 border-red-200";
+      case "depense_contribution":
+        return "bg-green-100 text-green-800 border-green-200";
+      case "cassation":
+        return "bg-amber-100 text-amber-800 border-amber-200";
       default:
         return "bg-slate-100 text-slate-800 border-slate-200";
     }
@@ -272,28 +347,52 @@ export function Mouvements() {
     switch (type) {
       case "epargne":
         return "Épargne";
-      case "cotisation_annuelle":
-        return "Cotisation Annuelle";
-      case "versement_ponctuel":
-        return "Versement Ponctuel";
-      case "depot_caution":
-        return "Dépôt Caution";
-      case "restitution_caution":
-        return "Restitution Caution";
       case "credit":
         return "Crédit";
       case "remboursement":
         return "Remboursement";
-      case "interet":
-        return "Intérêt";
-      case "depense_commune_fonds":
-        return "Dépense Fonds";
-      case "depense_commune_epargne":
+      case "depense_epargne":
         return "Dépense Épargne";
+      case "depense_contribution":
+        return "Dépense Contribution";
+      case "cassation":
+        return "Cassation";
       default:
         return type;
     }
   };
+
+  // Fonction pour calculer les pénalités si le crédit est en retard
+  const calculerPenalites = (transaction: Transaction) => {
+    if (transaction.type !== "credit") return 0;
+
+    // Pour les mouvements de type crédit, on ne peut pas calculer les pénalités
+    // car on n'a pas accès aux informations de date d'échéance
+    // Cette fonction sera utilisée si on ajoute ces informations plus tard
+    return 0;
+  };
+
+  // Lire le fonds disponible via IPC (calcul Electron unique)
+  const [fundBalance, setFundBalance] = useState(0);
+  const [soldeFictif, setSoldeFictif] = useState(0);
+  const [totalCreditsRestants, setTotalCreditsRestants] = useState(0);
+
+  useEffect(() => {
+      const loadFundBalance = async () => {
+    try {
+      if (window.electronAPI) {
+        const fonds = await window.electronAPI.getSoldeFonds();
+        setFundBalance(fonds.solde);
+        setSoldeFictif(fonds.soldeFictif || 0);
+        setTotalCreditsRestants(fonds.totalCreditsRestants || 0);
+      }
+    } catch (error) {
+      console.error("Erreur lors du chargement du solde:", error);
+    }
+  };
+
+    loadFundBalance();
+  }, [transactions]);
 
   const totalIn = filteredTransactions
     .filter((entry) => entry.montant > 0)
@@ -329,9 +428,17 @@ export function Mouvements() {
             Consultez et gérez tous les mouvements financiers
           </p>
         </div>
-        <Button variant="outline">
-          <Download className="h-4 w-4 mr-2" />
-          Exporter
+        <Button 
+          variant="outline" 
+          onClick={handleExportPdf}
+          disabled={exportingPdf}
+        >
+          {exportingPdf ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <FileDown className="h-4 w-4 mr-2" />
+          )}
+          {exportingPdf ? "Export en cours..." : "Exporter PDF"}
         </Button>
       </div>
 
@@ -345,7 +452,7 @@ export function Mouvements() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">
-              {totalIn.toLocaleString()} FCFA
+              {totalIn.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
             </div>
           </CardContent>
         </Card>
@@ -358,24 +465,37 @@ export function Mouvements() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">
-              {totalOut.toLocaleString()} FCFA
+              {totalOut.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
             </div>
           </CardContent>
         </Card>
         <Card className="border-l-4 border-l-blue-500 hover:shadow-lg transition-shadow">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium text-slate-600">
-              Solde Net
+              Fonds Disponibles
             </CardTitle>
             <Calculator className="h-4 w-4 text-blue-600" />
           </CardHeader>
           <CardContent>
-            <div
-              className={`text-2xl font-bold ${
-                totalIn - totalOut >= 0 ? "text-green-600" : "text-red-600"
-              }`}
-            >
-              {(totalIn - totalOut).toLocaleString()} FCFA
+            <div className="text-2xl font-bold text-blue-600">
+              {fundBalance.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+            </div>
+          </CardContent>
+        </Card>
+        
+        <Card className="border-l-4 border-l-green-500 hover:shadow-lg transition-shadow">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-slate-600">
+              Solde Fictif (Si Tous En Règle)
+            </CardTitle>
+            <CheckCircle className="h-4 w-4 text-green-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-600">
+              {soldeFictif.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+            </div>
+            <div className="text-sm text-slate-500 mt-1">
+              +{totalCreditsRestants.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA de crédits restants
             </div>
           </CardContent>
         </Card>
@@ -403,25 +523,16 @@ export function Mouvements() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Tous les types</SelectItem>
-                  <SelectItem value="cotisation_annuelle">
-                    Cotisation Annuelle
-                  </SelectItem>
-                  <SelectItem value="versement_ponctuel">
-                    Versement Ponctuel
-                  </SelectItem>
-                  <SelectItem value="depot_caution">Dépôt Caution</SelectItem>
-                  <SelectItem value="restitution_caution">
-                    Restitution Caution
-                  </SelectItem>
+                  <SelectItem value="epargne">Épargne</SelectItem>
                   <SelectItem value="credit">Crédit</SelectItem>
                   <SelectItem value="remboursement">Remboursement</SelectItem>
-                  <SelectItem value="interet">Intérêt</SelectItem>
-                  <SelectItem value="depense_commune_fonds">
-                    Dépense Fonds
-                  </SelectItem>
-                  <SelectItem value="depense_commune_epargne">
+                  <SelectItem value="depense_epargne">
                     Dépense Épargne
                   </SelectItem>
+                  <SelectItem value="depense_contribution">
+                    Dépense Contribution
+                  </SelectItem>
+                  <SelectItem value="cassation">Cassation</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={memberFilter} onValueChange={setMemberFilter}>
@@ -437,7 +548,20 @@ export function Mouvements() {
                   ))}
                 </SelectContent>
               </Select>
-              {selectedTransactions.length > 0 && (
+              <Select value={sessionFilter} onValueChange={setSessionFilter}>
+                <SelectTrigger className="w-48">
+                  <SelectValue placeholder="Filtrer par session" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Toutes les sessions</SelectItem>
+                  {sessions.map((s) => (
+                    <SelectItem key={s.id} value={String(s.id)}>
+                      {s.nom || `Session ${s.numero}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {selectedTransactions.length > 0 && role === "admin" && (
                 <Button
                   onClick={handleDeleteSelected}
                   variant="destructive"
@@ -482,11 +606,12 @@ export function Mouvements() {
                       onCheckedChange={handleSelectAll}
                     />
                   </TableHead>
-                  <TableHead>Date</TableHead>
+                  <TableHead>Session</TableHead>
                   <TableHead>Membre</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Montant</TableHead>
                   <TableHead>Motif</TableHead>
+                  <TableHead>Modifié le</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -504,8 +629,14 @@ export function Mouvements() {
                         }
                       />
                     </TableCell>
-                    <TableCell>
-                      {new Date(transaction.date).toLocaleDateString("fr-FR")}
+                    <TableCell className="font-medium">
+                      {(() => {
+                        if (!transaction.sessionId) {
+                          return "Aucune session";
+                        }
+                        const s = sessions.find((x: any) => x.id === transaction.sessionId);
+                        return s ? (s.nom || `Session ${s.numero}`) : `Session ${transaction.sessionId}`;
+                      })()}
                     </TableCell>
                     <TableCell className="font-medium">
                       {transaction.membreNom}
@@ -527,10 +658,24 @@ export function Mouvements() {
                         }`}
                       >
                         {transaction.montant >= 0 ? "+" : ""}
-                        {transaction.montant.toLocaleString()} FCFA
+                        {transaction.montant.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                       </span>
                     </TableCell>
                     <TableCell>{transaction.motif}</TableCell>
+                    <TableCell>
+                      {transaction.updatedAt
+                        ? new Date(transaction.updatedAt).toLocaleString(
+                            "fr-FR",
+                            {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            }
+                          )
+                        : "—"}
+                    </TableCell>
                     <TableCell>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -539,19 +684,23 @@ export function Mouvements() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={() => openEditDialog(transaction)}
-                          >
-                            <Edit className="mr-2 h-4 w-4" />
-                            Modifier
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => openDeleteDialog(transaction)}
-                            className="text-red-600"
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Supprimer
-                          </DropdownMenuItem>
+                          {role === "admin" && (
+                            <DropdownMenuItem
+                              onClick={() => openEditDialog(transaction)}
+                            >
+                              <Edit className="mr-2 h-4 w-4" />
+                              Modifier
+                            </DropdownMenuItem>
+                          )}
+                          {role === "admin" && (
+                            <DropdownMenuItem
+                              onClick={() => openDeleteDialog(transaction)}
+                              className="text-red-600"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Supprimer
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -611,6 +760,7 @@ export function Mouvements() {
                 <Button
                   onClick={handleEditTransaction}
                   className="bg-blue-600 hover:bg-blue-700"
+                  disabled={role !== "admin"}
                 >
                   Sauvegarder
                 </Button>
@@ -645,7 +795,7 @@ export function Mouvements() {
                   {getTypeLabel(selectedTransaction.type)}
                   <br />
                   <strong>Montant :</strong>{" "}
-                  {selectedTransaction.montant.toLocaleString()} FCFA
+                  {selectedTransaction.montant.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                   <br />
                   <strong>Motif :</strong> {selectedTransaction.motif}
                 </p>
@@ -661,6 +811,7 @@ export function Mouvements() {
                 <Button
                   onClick={handleDeleteTransaction}
                   className="bg-red-600 hover:bg-red-700"
+                  disabled={role !== "admin"}
                 >
                   Supprimer
                 </Button>

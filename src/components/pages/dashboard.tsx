@@ -1,14 +1,26 @@
 "use client"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Users, Wallet, CreditCard, TrendingUp } from "lucide-react"
+import { Users, CreditCard, TrendingUp } from "lucide-react"
+import meetingPng from "../../../assets/meeting.png"
+
+// Composant d'icône personnalisée pour remplacer Wallet
+const CustomWalletIcon = ({ className }: { className?: string }) => (
+  <div className={`inline-flex items-center justify-center ${className}`}>
+    <img 
+      src={meetingPng}
+      alt="Fonds" 
+      className="h-4 w-4 object-cover rounded-sm"
+    />
+  </div>
+)
 
 export function Dashboard() {
   const stats = [
     {
       title: "Total des Fonds",
       value: "125,430,000 FCFA",
-      icon: Wallet,
+      icon: CustomWalletIcon,
       color: "blue",
       change: "+12.5%",
     },

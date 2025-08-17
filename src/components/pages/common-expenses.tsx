@@ -55,6 +55,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardHeader, CardTitle, CardContent } from "../ui/card.js";
+import { useRole } from "../../hooks/useRole";
 import { Checkbox } from "@/components/ui/checkbox";
 
 interface CommonExpense {
@@ -63,6 +64,7 @@ interface CommonExpense {
   categorie: string;
   montant: number;
   description: string;
+  typeContribution: "prelevement_epargne" | "contribution_individuelle";
 }
 
 interface CommonFundBalance {
@@ -70,6 +72,14 @@ interface CommonFundBalance {
   lastUpdated: string;
   totalMembers: number;
   contributionPerMember: number;
+}
+
+// Nouvelle interface pour la modale "Gérer le fonds"
+interface GestionFondsData {
+  montantTotal: number;
+  description: string;
+  categorie: string;
+  typeContribution: "prelevement_epargne" | "contribution_individuelle";
 }
 
 const EXPENSE_CATEGORIES = [
@@ -83,29 +93,25 @@ const EXPENSE_CATEGORIES = [
 ];
 
 export function CommonExpenses() {
+  const { role } = useRole();
   const [expenses, setExpenses] = useState<CommonExpense[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
-  const [isFundDialogOpen, setIsFundDialogOpen] = useState(false);
+  const [isGestionFondsOpen, setIsGestionFondsOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedExpense, setSelectedExpense] = useState<CommonExpense | null>(
     null
   );
   const [selectedExpenses, setSelectedExpenses] = useState<number[]>([]);
-  const [newExpense, setNewExpense] = useState({
-    categorie: "",
-    montant: 0,
+  const [gestionFondsData, setGestionFondsData] = useState<GestionFondsData>({
+    montantTotal: 0,
     description: "",
+    categorie: "",
+    typeContribution: "prelevement_epargne",
   });
-  const [fundContribution, setFundContribution] = useState({
-    type: "annual", // "annual" ou "ponctuel"
-    amountPerMember: 1000000,
-  });
-  const [useEpargne, setUseEpargne] = useState(false);
-
+  const [montantTotalStr, setMontantTotalStr] = useState("");
   const [members, setMembers] = useState<any[]>([]);
   const [isMultiDeleteDialogOpen, setIsMultiDeleteDialogOpen] = useState(false);
 
@@ -125,13 +131,13 @@ export function CommonExpenses() {
     loadMembers();
   }, []);
 
-  // Calcul du solde du fonds commun basé sur les dépenses
+  // Calcul du solde du fonds basé sur les dépenses
   const totalExpenses = expenses.reduce(
     (sum, expense) => sum + expense.montant,
     0
   );
 
-  // Calcul du solde du fonds selon la formule : (∑Épargnes) - (∑Crédits en cours) - (∑Dépenses communes) + (∑Cotisations)
+  // Calcul du solde du fonds selon la formule : (∑Épargnes) - (∑Crédits en cours - montant initial) - (∑Dépenses communes) + (∑Cotisations)
   const [fundBalance, setFundBalance] = useState<CommonFundBalance>({
     balance: 0,
     lastUpdated: new Date().toISOString(),
@@ -143,11 +149,12 @@ export function CommonExpenses() {
   const loadFundBalance = async () => {
     try {
       if (window.electronAPI) {
-        const soldeData = await window.electronAPI.getSoldeFonds();
+        const fonds = await window.electronAPI.getSoldeFonds();
+        const membersList = await window.electronAPI.getMembres();
         setFundBalance({
-          balance: soldeData.solde,
+          balance: fonds.solde,
           lastUpdated: new Date().toISOString(),
-          totalMembers: members.length,
+          totalMembers: membersList.length,
           contributionPerMember: 1000000,
         });
       }
@@ -180,6 +187,60 @@ export function CommonExpenses() {
     loadData();
   }, []);
 
+  // Écouter les événements de suppression de crédit et mise à jour du fonds pour recharger les données
+  useEffect(() => {
+    if (window.electronAPI) {
+      const handleCreditDeleted = (creditId: number) => {
+        console.log(
+          `Crédit ${creditId} supprimé, rechargement des dépenses communes...`
+        );
+        loadData();
+        loadFundBalance();
+      };
+
+      const handleFondsUpdated = (data: { montant: number; type: string }) => {
+        console.log(
+          `Dépenses communes: Fonds mis à jour - ${data.type} - ${data.montant} FCFA`
+        );
+        loadFundBalance();
+      };
+
+      const handleMouvementsUpdated = (data: {
+        type: string;
+        depenseId: number;
+        depenseType: string;
+      }) => {
+        console.log(
+          `Dépenses communes: Mouvements mis à jour - ${data.type} - Dépense ${data.depenseId} (${data.depenseType})`
+        );
+        loadData();
+        loadFundBalance();
+      };
+
+      window.electronAPI.onCreditDeleted(handleCreditDeleted);
+      window.electronAPI.onFondsUpdated(handleFondsUpdated);
+      window.electronAPI.onMouvementsUpdated(handleMouvementsUpdated);
+
+      // Cleanup function
+      return () => {
+        // Retirer les listeners pour éviter les memory leaks
+        if (window.electronAPI) {
+          if (window.electronAPI.removeCreditDeletedListener) {
+            window.electronAPI.removeCreditDeletedListener(handleCreditDeleted);
+          }
+          if (window.electronAPI.removeFondsUpdatedListener) {
+            window.electronAPI.removeFondsUpdatedListener(handleFondsUpdated);
+          }
+          if (window.electronAPI.removeMouvementsUpdatedListener) {
+            window.electronAPI.removeMouvementsUpdatedListener(
+              handleMouvementsUpdated
+            );
+          }
+        }
+      };
+    }
+  }, []);
+
   const filteredExpenses = expenses.filter((expense) => {
     const matchesSearch = expense.description
       .toLowerCase()
@@ -189,25 +250,36 @@ export function CommonExpenses() {
     return matchesSearch && matchesCategory;
   });
 
-  const handleAddExpense = async () => {
+  const handleGestionFonds = async () => {
     try {
       if (!window.electronAPI) {
         toast.error("API Electron non disponible");
         return;
       }
 
-      if (!useEpargne && newExpense.montant > fundBalance.balance) {
-        toast.error(
-          `Solde fonds commun insuffisant (${fundBalance.balance.toLocaleString()} FCFA). Veuillez reconstituer le fonds.`
-        );
+      if (gestionFondsData.montantTotal <= 0) {
+        toast.error("Le montant total doit être supérieur à 0");
         return;
       }
 
+      if (!gestionFondsData.description.trim()) {
+        toast.error("Veuillez saisir une description");
+        return;
+      }
+
+      if (!gestionFondsData.categorie) {
+        toast.error("Veuillez sélectionner une catégorie");
+        return;
+      }
+
+      // Plus de saisie de montant par membre, calcul automatique dans le résumé
+
+      // Créer la dépense commune
       const depenseData = {
-        description: newExpense.description,
-        montant: newExpense.montant,
-        categorie: newExpense.categorie,
-        useEpargne,
+        description: gestionFondsData.description,
+        montant: gestionFondsData.montantTotal,
+        categorie: gestionFondsData.categorie,
+        typeContribution: gestionFondsData.typeContribution,
       };
 
       const result = await window.electronAPI.ajouterDepenseCommune(
@@ -215,26 +287,30 @@ export function CommonExpenses() {
       );
 
       if (result.success) {
-        toast.success(
-          useEpargne
-            ? "Dépense prise sur l’épargne des membres ✅"
-            : `Dépense de ${newExpense.montant.toLocaleString()} FCFA ajoutée pour ${
-                newExpense.categorie
-              }.`
-        );
-        setNewExpense({
-          categorie: "",
-          montant: 0,
+        const message =
+          gestionFondsData.typeContribution === "prelevement_epargne"
+            ? `Dépense de ${gestionFondsData.montantTotal.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA prélevée sur l'épargne des membres.`
+            : `Dépense de ${gestionFondsData.montantTotal.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA répartie en contributions individuelles.`;
+
+        toast.success(message);
+
+        // Réinitialiser le formulaire
+        setGestionFondsData({
+          montantTotal: 0,
           description: "",
+          categorie: "",
+          typeContribution: "prelevement_epargne",
         });
-        setIsAddExpenseOpen(false);
-        setUseEpargne(false);
-        loadData(); // Recharger les données
+        setMontantTotalStr(""); // Reset the string input
+
+        setIsGestionFondsOpen(false);
+        loadData();
+        loadFundBalance();
       } else {
-        toast.error("Erreur lors de l'ajout de la dépense");
+        toast.error("Erreur lors de l'enregistrement de la dépense");
       }
     } catch (error) {
-      console.error("Erreur lors de l'ajout de la dépense:", error);
+      console.error("Erreur lors de l'enregistrement de la dépense:", error);
       toast.error(
         "Une erreur est survenue lors de l'enregistrement de la dépense."
       );
@@ -271,6 +347,7 @@ export function CommonExpenses() {
         setIsEditDialogOpen(false);
         setSelectedExpense(null);
         loadData(); // Recharger les données
+        loadFundBalance(); // Recharger le solde du fonds
       } else {
         toast.error("Erreur lors de la modification de la dépense");
       }
@@ -292,11 +369,12 @@ export function CommonExpenses() {
 
       if (result.success) {
         toast.success(
-          `Le montant de ${selectedExpense.montant.toLocaleString()} FCFA a été remboursé au fonds.`
+          `Le montant de ${selectedExpense.montant.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA a été remboursé au fonds.`
         );
         setIsDeleteDialogOpen(false);
         setSelectedExpense(null);
         loadData(); // Recharger les données
+        loadFundBalance(); // Recharger le solde du fonds
       } else {
         toast.error("Erreur lors de la suppression de la dépense");
       }
@@ -305,60 +383,6 @@ export function CommonExpenses() {
       toast.error(
         "Une erreur est survenue lors de la suppression de la dépense."
       );
-    }
-  };
-
-  const handleFundContribution = async () => {
-    try {
-      if (!window.electronAPI) {
-        toast.error("API Electron non disponible");
-        return;
-      }
-
-      const today = new Date().toISOString().split("T")[0];
-      if (!today) {
-        toast.error("Erreur lors de la génération de la date");
-        return;
-      }
-
-      const cotisationData = {
-        montantParMembre: fundContribution.amountPerMember,
-        date: today,
-        type: fundContribution.type === "annual" ? "annuelle" : "ponctuel",
-      } as const;
-
-      const result = await window.electronAPI.addCotisation(cotisationData);
-
-      if (result.success) {
-        const totalContribution =
-          fundContribution.amountPerMember * fundBalance.totalMembers;
-        toast.success(
-          `${totalContribution.toLocaleString()} FCFA ajoutés au fonds commun via les cotisations.`
-        );
-        setIsFundDialogOpen(false);
-        loadData(); // Recharger les données
-        loadMembers(); // Recharger les membres aussi
-        loadFundBalance(); // Recharger le solde du fonds
-      } else {
-        if (result.membresInsuffisants) {
-          const membresList = result.membresInsuffisants
-            .map(
-              (m: any) =>
-                `${
-                  m.nom
-                } (solde: ${m.solde.toLocaleString()} FCFA, requis: ${m.montantRequis.toLocaleString()} FCFA)`
-            )
-            .join(", ");
-          toast.error(
-            `Solde insuffisant pour certains membres : ${membresList}. Veuillez d'abord alimenter leurs comptes épargne.`
-          );
-        } else {
-          toast.error("Erreur lors de l'alimentation du fonds");
-        }
-      }
-    } catch (error) {
-      console.error("Erreur lors de l'alimentation du fonds:", error);
-      toast.error("Une erreur est survenue lors de l'alimentation du fonds.");
     }
   };
 
@@ -416,6 +440,7 @@ export function CommonExpenses() {
       );
       setSelectedExpenses([]);
       loadData();
+      loadFundBalance(); // Recharger le solde du fonds après la suppression
     } catch (error) {
       console.error("Erreur lors de la suppression des dépenses:", error);
       toast.error("Erreur lors de la suppression des dépenses");
@@ -445,206 +470,194 @@ export function CommonExpenses() {
           </p>
         </div>
         <div className="flex gap-3">
-          <Dialog open={isFundDialogOpen} onOpenChange={setIsFundDialogOpen}>
-            <DialogTrigger asChild>
-              <Button
-                variant="outline"
-                className="border-blue-600 text-blue-600 hover:bg-blue-50 bg-transparent"
-              >
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Alimenter le Fonds
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-md">
-              <DialogHeader>
-                <DialogTitle>Alimenter le Fonds Commun</DialogTitle>
-                <DialogDescription>
-                  Reconstituer le fonds commun avec les cotisations des membres.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <Alert>
-                  <Wallet className="h-4 w-4" />
-                  <AlertDescription>
-                    <strong>Protection de la caution :</strong> Les 30,000,000
-                    FCFA de caution individuelle ne sont jamais touchés.
-                  </AlertDescription>
-                </Alert>
-
-                <div>
-                  <Label>Type de contribution</Label>
-                  <Select
-                    value={fundContribution.type}
-                    onValueChange={(value: string) =>
-                      setFundContribution({ ...fundContribution, type: value })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="annual">
-                        Prélèvement cotisation annuelle
-                      </SelectItem>
-                      <SelectItem value="ponctuel">
-                        Versement ponctuel (réunion)
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <Label>Montant par membre (FCFA)</Label>
-                  <Input
-                    type="number"
-                    value={fundContribution.amountPerMember}
-                    onChange={(e) =>
-                      setFundContribution({
-                        ...fundContribution,
-                        amountPerMember: Number(e.target.value),
-                      })
-                    }
-                    placeholder="1000000"
-                  />
-                </div>
-
-                <div className="p-3 bg-blue-50 rounded-lg">
-                  <p className="text-sm text-blue-800">
-                    <strong>Total à collecter :</strong>
-                    <br />
-                    {fundContribution.amountPerMember.toLocaleString()} FCFA ×{" "}
-                    {fundBalance.totalMembers} membres ={" "}
-                    <span className="font-bold">
-                      {(
-                        fundContribution.amountPerMember *
-                        fundBalance.totalMembers
-                      ).toLocaleString()}{" "}
-                      FCFA
-                    </span>
-                  </p>
-                </div>
-
-                <Button
-                  onClick={handleFundContribution}
-                  className="w-full bg-blue-600 hover:bg-blue-700"
-                >
-                  <DollarSign className="h-4 w-4 mr-2" />
-                  Alimenter le Fonds
+          {role === "admin" && (
+            <Dialog
+              open={isGestionFondsOpen}
+              onOpenChange={setIsGestionFondsOpen}
+            >
+              <DialogTrigger asChild>
+                <Button className="bg-blue-600 hover:bg-blue-700">
+                  <Wallet className="h-4 w-4 mr-2" />
+                  Gérer le Fonds
                 </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+              </DialogTrigger>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Gérer le Fonds</DialogTitle>
+                  <DialogDescription>
+                    Enregistrez une dépense commune et choisissez le type de
+                    contribution.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="category">Catégorie</Label>
+                    <Select
+                      value={gestionFondsData.categorie}
+                      onValueChange={(value: string) =>
+                        setGestionFondsData({
+                          ...gestionFondsData,
+                          categorie: value,
+                        })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Sélectionner une catégorie" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {EXPENSE_CATEGORIES.map((category) => (
+                          <SelectItem key={category} value={category}>
+                            {category}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-          <Dialog open={isAddExpenseOpen} onOpenChange={setIsAddExpenseOpen}>
-            <DialogTrigger asChild>
-              <Button className="bg-red-600 hover:bg-red-700">
-                <Plus className="h-4 w-4 mr-2" />
-                Nouvelle Dépense
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-md">
-              <DialogHeader>
-                <DialogTitle>Enregistrer une dépense</DialogTitle>
-                <DialogDescription>
-                  Enregistrez une nouvelle dépense commune pour le fonds
-                  familial.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="category">Catégorie</Label>
-                  <Select
-                    onValueChange={(value: string) =>
-                      setNewExpense({ ...newExpense, categorie: value })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Sélectionner une catégorie" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {EXPENSE_CATEGORIES.map((category) => (
-                        <SelectItem key={category} value={category}>
-                          {category}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                  <div>
+                    <Label htmlFor="montant">Montant total (FCFA)</Label>
+                    <Input
+                      id="montant"
+                      type="number"
+                      value={montantTotalStr}
+                      onChange={(e) => {
+                        const v = e.target.value.replace(/[^0-9]/g, "");
+                        setMontantTotalStr(v);
+                        setGestionFondsData({
+                          ...gestionFondsData,
+                          montantTotal: v === "" ? 0 : Number(v),
+                        });
+                      }}
+                      placeholder="5000000"
+                    />
+                  </div>
 
-                <div>
-                  <Label htmlFor="amount">Montant (FCFA)</Label>
-                  <Input
-                    id="amount"
-                    type="number"
-                    value={newExpense.montant}
-                    onChange={(e) =>
-                      setNewExpense({
-                        ...newExpense,
-                        montant: Number(e.target.value),
-                      })
-                    }
-                    placeholder="5000000"
-                  />
-                  {newExpense.montant > fundBalance.balance && (
-                    <p className="text-sm text-red-600 mt-1">
-                      ⚠️ Montant supérieur au solde disponible (
-                      {fundBalance.balance.toLocaleString()} FCFA)
+                  <div>
+                    <Label htmlFor="description">Description</Label>
+                    <Textarea
+                      id="description"
+                      value={gestionFondsData.description}
+                      onChange={(e) =>
+                        setGestionFondsData({
+                          ...gestionFondsData,
+                          description: e.target.value,
+                        })
+                      }
+                      placeholder="Description de la dépense..."
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="space-y-3">
+                    <Label>Type de contribution</Label>
+                    <div className="space-y-2">
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="radio"
+                          id="prelevement-epargne"
+                          name="typeContribution"
+                          value="prelevement_epargne"
+                          checked={
+                            gestionFondsData.typeContribution ===
+                            "prelevement_epargne"
+                          }
+                          onChange={(e) =>
+                            setGestionFondsData({
+                              ...gestionFondsData,
+                              typeContribution: "prelevement_epargne" as const,
+                            })
+                          }
+                          className="form-radio h-4 w-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                        />
+                        <Label
+                          htmlFor="prelevement-epargne"
+                          className="cursor-pointer"
+                        >
+                          Prélèvement sur épargne
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="radio"
+                          id="contribution-individuelle"
+                          name="typeContribution"
+                          value="contribution_individuelle"
+                          checked={
+                            gestionFondsData.typeContribution ===
+                            "contribution_individuelle"
+                          }
+                          onChange={(e) =>
+                            setGestionFondsData({
+                              ...gestionFondsData,
+                              typeContribution:
+                                "contribution_individuelle" as const,
+                            })
+                          }
+                          className="form-radio h-4 w-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                        />
+                        <Label
+                          htmlFor="contribution-individuelle"
+                          className="cursor-pointer"
+                        >
+                          Contribution individuelle
+                        </Label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Saisie du montant par membre supprimée; calcul dans le résumé */}
+
+                  <div className="p-3 bg-blue-50 rounded-lg">
+                    <p className="text-sm text-blue-800">
+                      <strong>Résumé :</strong>
+                      <br />
+                      {gestionFondsData.typeContribution ===
+                      "prelevement_epargne" ? (
+                        <>
+                          • Montant total :{" "}
+                          {gestionFondsData.montantTotal.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                          <br />• Répartition : {members.length} membres
+                          <br />• Montant par membre :{" "}
+                          {Math.round(
+                            gestionFondsData.montantTotal / members.length
+                          ).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}{" "}
+                          FCFA
+                        </>
+                      ) : (
+                        <>
+                          • Montant total :{" "}
+                          {gestionFondsData.montantTotal.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                          <br />• Nombre de membres : {members.length}
+                          <br />• Montant par membre :{" "}
+                          {(members.length > 0
+                            ? Math.round(
+                                gestionFondsData.montantTotal / members.length
+                              )
+                            : 0
+                          ).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}{" "}
+                          FCFA
+                        </>
+                      )}
                     </p>
-                  )}
-                </div>
+                  </div>
 
-                <div>
-                  <Label htmlFor="description">Description</Label>
-                  <Textarea
-                    id="description"
-                    value={newExpense.description}
-                    onChange={(e) =>
-                      setNewExpense({
-                        ...newExpense,
-                        description: e.target.value,
-                      })
+                  <Button
+                    onClick={handleGestionFonds}
+                    disabled={
+                      role !== "admin" ||
+                      !gestionFondsData.categorie ||
+                      gestionFondsData.montantTotal <= 0 ||
+                      !gestionFondsData.description.trim()
                     }
-                    placeholder="Description de la dépense..."
-                    rows={3}
-                  />
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <input
-                    id="use-epargne"
-                    type="checkbox"
-                    checked={useEpargne}
-                    onChange={(e) => setUseEpargne(e.target.checked)}
-                    className="form-checkbox h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                  />
-                  <Label
-                    htmlFor="use-epargne"
-                    className="cursor-pointer select-none"
+                    className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
                   >
-                    Prélèvement sur l’épargne des membres
-                  </Label>
+                    <Receipt className="h-4 w-4 mr-2" />
+                    Enregistrer la Dépense
+                  </Button>
                 </div>
-                <p className="text-xs text-slate-500 ml-6">
-                  {useEpargne
-                    ? "La dépense sera répartie équitablement sur l’épargne de chaque membre."
-                    : "La dépense sera prélevée sur le fonds commun comme d’habitude."}
-                </p>
-
-                <Button
-                  onClick={handleAddExpense}
-                  disabled={
-                    !newExpense.categorie ||
-                    newExpense.montant <= 0 ||
-                    (!useEpargne && newExpense.montant > fundBalance.balance)
-                  }
-                  className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50"
-                >
-                  <Receipt className="h-4 w-4 mr-2" />
-                  Enregistrer la Dépense
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+              </DialogContent>
+            </Dialog>
+          )}
         </div>
       </div>
 
@@ -665,17 +678,11 @@ export function CommonExpenses() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <p className="text-sm text-slate-600">Solde disponible</p>
               <p className="text-3xl font-bold text-blue-600">
-                {fundBalance.balance.toLocaleString()} FCFA
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-slate-600">Contribution/membre</p>
-              <p className="text-xl font-semibold text-slate-900">
-                {fundBalance.contributionPerMember.toLocaleString()} FCFA
+                {fundBalance.balance.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
               </p>
             </div>
             <div>
@@ -709,7 +716,7 @@ export function CommonExpenses() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">
-              {totalExpenses.toLocaleString()} FCFA
+              {totalExpenses.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
             </div>
           </CardContent>
         </Card>
@@ -738,7 +745,7 @@ export function CommonExpenses() {
           <CardContent>
             <div className="text-2xl font-bold text-green-600">
               {expenses.length > 0
-                ? Math.round(totalExpenses / expenses.length).toLocaleString()
+                ? Math.round(totalExpenses / expenses.length).toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })
                 : 0}{" "}
               FCFA
             </div>
@@ -776,7 +783,7 @@ export function CommonExpenses() {
                   ))}
                 </SelectContent>
               </Select>
-              {selectedExpenses.length > 0 && (
+              {selectedExpenses.length > 0 && role === "admin" && (
                 <>
                   <Button
                     onClick={() => setIsMultiDeleteDialogOpen(true)}
@@ -883,6 +890,7 @@ export function CommonExpenses() {
                   <TableHead>Date</TableHead>
                   <TableHead>Catégorie</TableHead>
                   <TableHead>Montant</TableHead>
+                  <TableHead>Type de contribution</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
@@ -924,7 +932,21 @@ export function CommonExpenses() {
                       </Badge>
                     </TableCell>
                     <TableCell className="font-medium text-red-600">
-                      -{expense.montant.toLocaleString()} FCFA
+                      -{expense.montant.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={
+                          expense.typeContribution === "prelevement_epargne"
+                            ? "bg-blue-100 text-blue-800 border-blue-200"
+                            : "bg-green-100 text-green-800 border-green-200"
+                        }
+                      >
+                        {expense.typeContribution === "prelevement_epargne"
+                          ? "Prélèvement sur épargne"
+                          : "Contribution individuelle"}
+                      </Badge>
                     </TableCell>
                     <TableCell>{expense.description}</TableCell>
                     <TableCell>
@@ -935,19 +957,23 @@ export function CommonExpenses() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={() => openEditDialog(expense)}
-                          >
-                            <Edit className="mr-2 h-4 w-4" />
-                            Modifier
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => openDeleteDialog(expense)}
-                            className="text-red-600"
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Supprimer
-                          </DropdownMenuItem>
+                          {role === "admin" && (
+                            <DropdownMenuItem
+                              onClick={() => openEditDialog(expense)}
+                            >
+                              <Edit className="mr-2 h-4 w-4" />
+                              Modifier
+                            </DropdownMenuItem>
+                          )}
+                          {role === "admin" && (
+                            <DropdownMenuItem
+                              onClick={() => openDeleteDialog(expense)}
+                              className="text-red-600"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Supprimer
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -977,6 +1003,7 @@ export function CommonExpenses() {
                   onValueChange={(value: string) =>
                     setSelectedExpense({ ...selectedExpense, categorie: value })
                   }
+                  disabled={role !== "admin"}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -1002,6 +1029,7 @@ export function CommonExpenses() {
                       montant: Number(e.target.value),
                     })
                   }
+                  disabled={role !== "admin"}
                 />
               </div>
               <div>
@@ -1016,6 +1044,7 @@ export function CommonExpenses() {
                     })
                   }
                   rows={3}
+                  disabled={role !== "admin"}
                 />
               </div>
               <DialogFooter>
@@ -1028,6 +1057,7 @@ export function CommonExpenses() {
                 <Button
                   onClick={handleEditExpense}
                   className="bg-blue-600 hover:bg-blue-700"
+                  disabled={role !== "admin"}
                 >
                   Sauvegarder
                 </Button>
@@ -1058,8 +1088,8 @@ export function CommonExpenses() {
                 <p className="text-sm">
                   <strong>Catégorie :</strong> {selectedExpense.categorie}
                   <br />
-                  <strong>Montant :</strong>{" "}
-                  {selectedExpense.montant.toLocaleString()} FCFA
+                  <strong>Montant :</strong> {` `}
+                  {selectedExpense.montant.toLocaleString('fr-FR', { maximumFractionDigits: 0, minimumFractionDigits: 0 })} FCFA
                   <br />
                   <strong>Description :</strong> {selectedExpense.description}
                 </p>
@@ -1082,6 +1112,7 @@ export function CommonExpenses() {
                 <Button
                   onClick={handleDeleteExpense}
                   className="bg-red-600 hover:bg-red-700"
+                  disabled={role !== "admin"}
                 >
                   Supprimer
                 </Button>

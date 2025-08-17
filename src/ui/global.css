@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@600;700&display=swap");
 
 @custom-variant dark (&:is(.dark *));
 
@@ -116,5 +117,91 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  /* Arrière-plans clairs → tokens thème en sombre */
+  .dark .bg-white { background-color: var(--card) !important; }
+  .dark .bg-slate-50,
+  .dark .bg-slate-100,
+  .dark .bg-blue-50,
+  .dark .bg-blue-100,
+  .dark .bg-orange-50,
+  .dark .bg-orange-100,
+  .dark .bg-red-50,
+  .dark .bg-red-100 { background-color: var(--muted) !important; }
+
+  /* Bordures claires → token border */
+  .dark .border-slate-200,
+  .dark .border-blue-200,
+  .dark .border-orange-200,
+  .dark .border-red-200 { border-color: var(--border) !important; }
+
+  /* Texte foncé clair → foreground/muted-foreground */
+  .dark .text-slate-900,
+  .dark .text-gray-900,
+  .dark .text-black { color: var(--foreground) !important; }
+  .dark .text-slate-800,
+  .dark .text-slate-700,
+  .dark .text-slate-600,
+  .dark .text-gray-700,
+  .dark .text-slate-500 { color: var(--muted-foreground) !important; }
+
+  /* Teintes bleues / oranges / rouges trop saturées → foreground pour le contraste */
+  .dark .text-blue-900,
+  .dark .text-blue-800,
+  .dark .text-blue-700,
+  .dark .text-blue-600,
+  .dark .text-orange-900,
+  .dark .text-orange-800,
+  .dark .text-orange-700,
+  .dark .text-red-900,
+  .dark .text-red-800,
+  .dark .text-red-700 { color: var(--foreground) !important; }
+
+  /* Gradients très clairs → muted */
+  .dark .from-red-50,
+  .dark .from-orange-50,
+  .dark .from-blue-50,
+  .dark .from-slate-50,
+  .dark .from-blue-100,
+  .dark .from-orange-100,
+  .dark .from-red-100,
+  .dark .from-slate-100 {
+    --tw-gradient-from: var(--muted) !important;
+    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to, rgb(0 0 0 / 0));
+  }
+  .dark .to-orange-50,
+  .dark .to-blue-50,
+  .dark .to-slate-50,
+  .dark .to-red-50,
+  .dark .to-blue-100,
+  .dark .to-orange-100,
+  .dark .to-red-100,
+  .dark .to-slate-100 { --tw-gradient-to: var(--muted) !important; }
+
+  /* Hovers clairs → accent */
+  .dark .hover\:bg-blue-100:hover,
+  .dark .hover\:bg-orange-100:hover,
+  .dark .hover\:bg-slate-100:hover,
+  .dark .hover\:bg-red-100:hover { background-color: var(--accent) !important; }
+
+  /* Variants data-active sur sidebar */
+  .dark .data-\[active\=true\]\:bg-blue-100[data-active="true"] { background-color: var(--accent) !important; }
+  .dark .data-\[active\=true\]\:text-blue-900[data-active="true"] { color: var(--accent-foreground) !important; }
+  .font-brand {
+    font-family: "Poppins", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  }
+  .bg-whatsapp-pattern {
+    background-color: var(--background);
+    background-image: radial-gradient(hsl(var(--muted-foreground) / 0.06) 1px, transparent 1px),
+      radial-gradient(hsl(var(--muted-foreground) / 0.06) 1px, transparent 1px);
+    background-position: 0 0, 20px 20px;
+    background-size: 40px 40px;
+  }
+  .dark .bg-whatsapp-pattern {
+    background-image: radial-gradient(hsl(var(--muted-foreground) / 0.12) 1px, transparent 1px),
+      radial-gradient(hsl(var(--muted-foreground) / 0.12) 1px, transparent 1px);
   }
 }
