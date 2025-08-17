@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="fr">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Mode d’emploi – Famille Tiwa Joseph</title>
+	<style>
+		:root{ --fg:#0f172a; --muted:#475569; --bg:#ffffff; --accent:#2563eb; }
+		*{ box-sizing:border-box }
+		html,body{ margin:0; padding:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color:var(--fg); background:var(--bg); }
+		.container{ max-width:900px; margin:40px auto; padding:0 20px; }
+		h1{ font-size:28px; margin:0 0 6px; }
+		.lead{ color:var(--muted); margin:0 0 24px; }
+		h2{ font-size:20px; margin:28px 0 10px; border-bottom:1px solid #e5e7eb; padding-bottom:6px; }
+		h3{ font-size:16px; margin:18px 0 6px; }
+		p{ line-height:1.6; margin:10px 0; color:#111827 }
+		ul{ margin:8px 0 12px 20px; }
+		code, pre{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:#f8fafc; border:1px solid #e5e7eb; border-radius:6px; }
+		code{ padding:0 4px; }
+		pre{ padding:12px; overflow:auto; }
+		.badge{ display:inline-block; padding:2px 8px; border:1px solid #e5e7eb; border-radius:999px; font-size:12px; color:#334155; background:#f8fafc; }
+		.kbd{ border:1px solid #cbd5e1; border-bottom-width:2px; border-radius:6px; padding:2px 6px; background:#f8fafc }
+		.note{ background:#f1f5f9; border-left:4px solid var(--accent); padding:10px 12px; border-radius:6px; color:#0f172a }
+	</style>
+</head>
+<body>
+	<div class="container">
+		<h1>Mode d’emploi – Application “Famille Tiwa Joseph”</h1>
+		<p class="lead">Gestion du fonds familial : membres, épargnes, crédits, sessions, dons, caisse, cassation.</p>
+
+		<h2>Installation et première utilisation</h2>
+		<ul>
+			<li>Installez via l’installateur : <span class="badge">Famille Tiwa Joseph Setup 1.0.0.exe</span></li>
+			<li>Lancez l’app depuis le Bureau ou le Menu Démarrer.</li>
+			<li><strong>Base de données</strong> : <code>C:\Users\&lt;Vous&gt;\AppData\Roaming\Famille Tiwa Joseph\tontine.db</code></li>
+			<li>Pour réutiliser une base existante, copiez votre <code>tontine.db</code> à cet emplacement.</li>
+		</ul>
+
+		<h2>Connexion</h2>
+		<ul>
+			<li>Admin : <code>admin@tontine.com</code> / <code>admin1234</code></li>
+			<li>Adjoint : <code>adjoint@tontine.com</code> / <code>adjoint1234</code></li>
+		</ul>
+
+		<h2>Navigation</h2>
+		<ul>
+			<li><strong>Dashboard</strong> : synthèse des fonds et activités.</li>
+			<li><strong>Membres</strong> : ajout, modification, historique.</li>
+			<li><strong>Mouvements / Épargnes</strong> : saisie et suivi (épargne, dépenses, etc.).</li>
+			<li><strong>Crédits</strong> : octroi, remboursements, pénalités auto lors de nouvelle session.</li>
+			<li><strong>Caisse</strong> : entrées/sorties, solde, historique.</li>
+			<li><strong>Dépenses communes</strong> : gestion par catégories.</li>
+			<li><strong>Dons</strong> : ajout, filtre, <em>suppression (admin)</em>.</li>
+			<li><strong>Sessions</strong> : créer, terminer, renommer, supprimer, mouvements, export PDF.</li>
+			<li><strong>Cassation</strong> : simulation, exécution, PDF.</li>
+		</ul>
+
+		<h2>Opérations courantes</h2>
+		<h3>Membres</h3>
+		<ul>
+			<li>Ajouter : <em>Membres → Nouveau</em></li>
+			<li>Modifier/Supprimer : depuis la liste des membres</li>
+		</ul>
+		<h3>Mouvements</h3>
+		<ul>
+			<li>Ajouter un mouvement : choisir le type (épargne, dépense, etc.), valider</li>
+		</ul>
+		<h3>Crédits</h3>
+		<ul>
+			<li>Accorder : <em>Crédits → Nouveau</em></li>
+			<li>Rembourser : saisir le montant, valider</li>
+		</ul>
+		<h3>Caisse</h3>
+		<ul>
+			<li>Ajouter entrée/sortie : saisir, valider</li>
+			<li>Consulter : historique et solde</li>
+		</ul>
+		<h3>Dépenses communes</h3>
+		<ul>
+			<li>Ajouter/Modifier/Supprimer des dépenses globales</li>
+		</ul>
+		<h3>Dons</h3>
+		<ul>
+			<li>Ajouter : <em>Dons → Nouveau don</em></li>
+			<li>Filtrer : sélection de catégorie</li>
+			<li>Supprimer (admin) : icône “poubelle”</li>
+		</ul>
+
+		<h2>Sessions & Cassation</h2>
+		<ul>
+			<li><strong>Créer une session</strong> : applique automatiquement 20% de pénalités sur crédits non remboursés.</li>
+			<li><strong>Terminer</strong> : clôture et préparation à la cassation.</li>
+			<li><strong>Renommer</strong> : identifiez clairement vos sessions.</li>
+			<li><strong>Supprimer</strong> : uniquement si non active.</li>
+			<li><strong>Mouvements</strong> : vue dédiée pour la session sélectionnée.</li>
+			<li><strong>Cassation</strong> : simuler, exécuter, exporter en PDF.</li>
+		</ul>
+
+		<h2>Exports PDF</h2>
+		<ul>
+			<li><strong>Mouvements d’une session</strong> : Sessions → Exporter PDF (enregistre dans <code>Downloads</code>).</li>
+			<li>Autres exports (si disponibles) : Membre, Cassation.</li>
+		</ul>
+
+		<h2>Données & sauvegardes</h2>
+		<ul>
+			<li>Base SQLite : <code>tontine.db</code></li>
+			<li><strong>Sauvegarde</strong> : copier régulièrement le fichier vers un support sécurisé.</li>
+			<li><strong>Restauration</strong> : remplacer le fichier dans le dossier <code>AppData/Roaming/Famille Tiwa Joseph</code>.</li>
+		</ul>
+
+		<h2>Dépannage</h2>
+		<ul>
+			<li><strong>“Unable to open database”</strong> : vérifiez l’existence/permissions du fichier dans <code>AppData/Roaming</code>. Copiez votre <code>tontine.db</code> si besoin.</li>
+			<li><strong>Export PDF non visible</strong> : vérifier <code>Downloads</code>, relancer l’app. Désactiver l’antivirus si verrouillage.</li>
+			<li><strong>Icônes/Images</strong> : redémarrer l’app, vérifier les ressources.</li>
+		</ul>
+
+		<p class="note"><strong>Support</strong> : en cas de problème, notez la version de l’app, l’action réalisée, l’heure, et joignez si possible une copie de <code>tontine.db</code>.</p>
+	</div>
+</body>
+</html>
+
+
+

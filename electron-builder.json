@@ -1,0 +1,38 @@
+{
+  "appId": "com.tontine.fondsfamilial",
+  "productName": "Famille Tiwa Joseph",
+  "executableName": "fonds-familial",
+  "directories": {
+    "output": "C:/ff-build"
+  },
+  "files": [
+    "dist-electron/**/*",
+    "dist-react/**/*",
+    "assets/**/*",
+    "package.json",
+    "node_modules/**/*"
+  ],
+  "asarUnpack": ["**/*.db"],
+  "extraResources": [
+    "dist-electron/preload.cjs",
+    "assets",
+    "desktopIcon.png",
+    {
+      "from": "tontine.db",
+      "to": "tontine.db",
+      "filter": ["**/*"]
+    }
+  ],
+
+  "mac": {
+    "target": "dmg"
+  },
+  "linux": {
+    "target": "AppImage",
+    "category": "Utility"
+  },
+  "win": {
+    "target": ["nsis", "portable"],
+    "icon": "assets/icon.ico"
+  }
+}
